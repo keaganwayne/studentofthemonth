@@ -3,6 +3,8 @@
   "use strict";
 
   const ADMIN_NAME = "Keagan Wayne Appel";
+  const ADMIN_PASSWORD = "31415";
+  const ADMIN_AUTH_KEY = "scls-sotm-admin-unlocked";
   const LOCAL_KEY = "scls-sotm-state-v1";
   const TEACHER_KEY = "scls-sotm-current-teacher";
   const MONTHS = [
@@ -25,6 +27,7 @@
     ready: false,
     route: "home",
     currentTeacher: localStorage.getItem(TEACHER_KEY) || "",
+    adminUnlocked: sessionStorage.getItem(ADMIN_AUTH_KEY) === "yes",
     students: [],
     teachers: [],
     winners: [],
@@ -236,9 +239,6 @@
             </button>
           </form>
 
-          <div class="mt-6 text-xs text-on-surface-variant leading-relaxed">
-            <p><strong class="text-yellow-300">Mechanic:</strong> one nomination can collect many teacher reactions, but each teacher has only one reaction per nominated student. Changing from upvote to downvote updates the same record.</p>
-          </div>
         </div>
       </section>
     `;
@@ -258,7 +258,7 @@
         </div>
         <h1 class="font-display-lg text-display-lg text-primary-container">Grade 6 Nominees</h1>
         <p class="font-body-base text-body-base text-on-surface-variant mt-2 max-w-2xl mx-auto">
-          ${escapeHtml(monthName)} voting is open. Final target: two girls and two boys, with preference toward students who have not already won this year.
+          ${escapeHtml(monthName)} voting is open. Final target: two girls and two boys for Grade 6.
         </p>
       </section>
 
@@ -266,7 +266,7 @@
         <div class="lg:col-span-4 glass-panel rounded-xl p-5">
           <p class="font-label-sm text-label-sm uppercase tracking-widest text-yellow-500 mb-2">Countdown</p>
           <h2 id="countdownText" class="font-headline-md text-3xl text-white">--</h2>
-          <p class="text-on-surface-variant text-sm mt-2">Deadline can be changed from the admin panel under ${ADMIN_NAME}.</p>
+          <p class="text-on-surface-variant text-sm mt-2">Current voting window.</p>
         </div>
         <div class="lg:col-span-4 glass-panel rounded-xl p-5">
           <p class="font-label-sm text-label-sm uppercase tracking-widest text-yellow-500 mb-2">Top girls right now</p>
@@ -282,7 +282,6 @@
         <div class="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-5">
           <div>
             <h2 class="font-headline-md text-2xl text-white">Current nomination list</h2>
-            <p class="text-on-surface-variant">These nominations carry forward until the team decides to close or replace them.</p>
           </div>
           <button data-route="vote" class="glow-button bg-primary-container text-on-primary px-5 py-3 rounded-full font-label-sm text-label-sm uppercase flex items-center justify-center gap-2">
             <span class="material-symbols-outlined">add_circle</span>
@@ -320,9 +319,8 @@
           <form id="nominationForm" class="flex flex-col gap-8 relative z-10">
             <div class="flex flex-col gap-2">
               <label class="font-label-sm text-label-sm text-on-surface uppercase tracking-widest">Nominator</label>
-              <div class="w-full bg-surface-container/30 border border-outline/10 rounded-lg py-3 px-4 text-on-surface-variant font-body-base flex items-center justify-between gap-2">
+              <div class="w-full bg-surface-container/30 border border-outline/10 rounded-lg py-3 px-4 text-on-surface-variant font-body-base flex items-center gap-2">
                 <span>${escapeHtml(state.currentTeacher)}</span>
-                <button type="button" id="switchTeacherInline" class="text-yellow-400 text-sm hover:text-yellow-200">switch</button>
               </div>
             </div>
 
@@ -404,6 +402,7 @@
     if (!isAdmin()) {
       return emptyPanel("Admin access only.", `This panel is only visible to ${ADMIN_NAME}.`);
     }
+    if (!state.adminUnlocked) return adminPasswordView();
 
     const deadline = getDeadline();
     const deadlineValue = toLocalDatetimeValue(deadline);
@@ -411,15 +410,17 @@
       .sort((a, b) => a.full_name.localeCompare(b.full_name))
       .map(s => `<option value="${escapeAttr(s.full_name)}">${escapeHtml(s.homeroom)} · ${escapeHtml(cap(s.gender))}</option>`)
       .join("");
-    const monthNum = new Date().getMonth() + 1;
+    const now = new Date();
+    const monthNum = now.getMonth() + 1;
     const currentMonth = MONTHS[monthNum - 1];
     const leadersGirls = candidateLeaders("girl").slice(0, 2);
     const leadersBoys = candidateLeaders("boy").slice(0, 2);
+    const printFilter = getPrintFilter();
 
     return `
       <section class="mb-10 text-center">
         <h1 class="font-display-lg text-display-lg text-primary-container">Admin Control</h1>
-        <p class="text-on-surface-variant mt-2">Deadline, student alert notes, and final winner recording.</p>
+        <p class="text-on-surface-variant mt-2">Deadline, warnings, winners, nominations, and print-ready certificate data.</p>
       </section>
 
       <section class="grid grid-cols-1 lg:grid-cols-12 gap-gutter">
@@ -429,7 +430,6 @@
             <input id="deadlineInput" name="deadlineInput" type="datetime-local" value="${escapeAttr(deadlineValue)}" class="w-full bg-surface-container-high/50 border border-outline/30 rounded-lg py-3 px-4 text-on-surface focus:outline-none focus:border-primary-container/50" />
             <button class="bg-primary-container text-on-primary rounded-lg py-3 font-label-sm text-label-sm uppercase glow-button" type="submit">Save deadline</button>
           </form>
-          <p class="text-xs text-on-surface-variant mt-3">Stored in Supabase settings when connected; otherwise stored in this browser.</p>
         </div>
 
         <div class="lg:col-span-7 glass-panel rounded-xl p-6">
@@ -451,14 +451,14 @@
           <div class="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-4">
             <div>
               <h2 class="font-headline-md text-2xl text-white">Record ${escapeHtml(currentMonth)} winners</h2>
-              <p class="text-on-surface-variant">Current suggested two girls and two boys are prefilled visually below. You can still type different names.</p>
+              <p class="text-on-surface-variant">This replaces the winner set for the chosen month, so wrong entries can be corrected without SQL.</p>
             </div>
             <div class="flex flex-wrap gap-2 text-sm">
               ${[...leadersGirls, ...leadersBoys].map(item => `<span class="badge rounded-full px-3 py-1 text-yellow-300">${escapeHtml(item.student.full_name)} · ${item.score}</span>`).join("") || `<span class="text-on-surface-variant">No active leaders yet.</span>`}
             </div>
           </div>
           <form id="winnerForm" class="grid grid-cols-1 md:grid-cols-6 gap-3">
-            <input name="winnerYear" type="number" value="${new Date().getFullYear()}" class="bg-surface-container-high/50 border border-outline/30 rounded-lg py-3 px-4 text-on-surface" />
+            <input name="winnerYear" type="number" value="${now.getFullYear()}" class="bg-surface-container-high/50 border border-outline/30 rounded-lg py-3 px-4 text-on-surface" />
             <select name="winnerMonth" class="bg-surface-container-high/50 border border-outline/30 rounded-lg py-3 px-4 text-on-surface">
               ${MONTHS.map((m, idx) => `<option value="${idx + 1}" ${idx + 1 === monthNum ? "selected" : ""}>${m}</option>`).join("")}
             </select>
@@ -466,16 +466,228 @@
             <input list="adminStudentList" name="winner2" placeholder="Girl 2" value="${escapeAttr(leadersGirls[1]?.student.full_name || "")}" class="bg-surface-container-high/50 border border-outline/30 rounded-lg py-3 px-4 text-on-surface" />
             <input list="adminStudentList" name="winner3" placeholder="Boy 1" value="${escapeAttr(leadersBoys[0]?.student.full_name || "")}" class="bg-surface-container-high/50 border border-outline/30 rounded-lg py-3 px-4 text-on-surface" />
             <input list="adminStudentList" name="winner4" placeholder="Boy 2" value="${escapeAttr(leadersBoys[1]?.student.full_name || "")}" class="bg-surface-container-high/50 border border-outline/30 rounded-lg py-3 px-4 text-on-surface" />
-            <button class="md:col-span-6 bg-primary-container text-on-primary rounded-lg py-3 font-label-sm text-label-sm uppercase glow-button" type="submit">Record winners</button>
+            <button class="md:col-span-6 bg-primary-container text-on-primary rounded-lg py-3 font-label-sm text-label-sm uppercase glow-button" type="submit">Record / replace winners</button>
           </form>
+        </div>
+
+        <div class="lg:col-span-12 glass-panel rounded-xl p-6">
+          <div class="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-5 no-print">
+            <div>
+              <h2 class="font-headline-md text-2xl text-white">Winner certificate data</h2>
+              <p class="text-on-surface-variant">Use this as the single page for certificate copy: winner names, homerooms, nomination month, vote totals, and written accolades.</p>
+            </div>
+            <button type="button" data-print-winners="1" class="bg-primary-container text-on-primary rounded-lg px-5 py-3 font-label-sm text-label-sm uppercase glow-button flex items-center gap-2 justify-center">
+              <span class="material-symbols-outlined">print</span>
+              Print winners
+            </button>
+          </div>
+          <form id="printFilterForm" class="grid grid-cols-1 md:grid-cols-4 gap-3 mb-5 no-print">
+            <input name="printYear" type="number" value="${escapeAttr(printFilter.year)}" class="bg-surface-container-high/50 border border-outline/30 rounded-lg py-3 px-4 text-on-surface" />
+            <select name="printMonth" class="bg-surface-container-high/50 border border-outline/30 rounded-lg py-3 px-4 text-on-surface">
+              ${MONTHS.map((m, idx) => `<option value="${idx + 1}" ${idx + 1 === printFilter.monthNumber ? "selected" : ""}>${m}</option>`).join("")}
+            </select>
+            <button class="md:col-span-2 bg-surface-container-high border border-yellow-500/20 text-yellow-200 rounded-lg py-3 font-label-sm text-label-sm uppercase" type="submit">Show this month</button>
+          </form>
+          ${winnerPrintPacket(printFilter.year, printFilter.monthNumber)}
         </div>
 
         <div class="lg:col-span-12">
           <h2 class="font-headline-md text-2xl text-white mb-4">Active alert notes</h2>
           ${alertsView(true)}
         </div>
+
+        <div class="lg:col-span-12">
+          ${adminWinnersEditor(studentOptions)}
+        </div>
+
+        <div class="lg:col-span-12">
+          ${adminNominationsEditor(studentOptions)}
+        </div>
       </section>
     `;
+  }
+
+  function adminPasswordView() {
+    return `
+      <section class="min-h-[65vh] grid place-items-center">
+        <div class="glass-panel rounded-2xl p-6 md:p-10 max-w-xl w-full relative overflow-hidden">
+          <div class="absolute -top-10 -left-10 w-40 h-40 bg-yellow-500/20 rounded-full blur-3xl"></div>
+          <div class="relative z-10 text-center mb-6">
+            <span class="material-symbols-outlined text-yellow-500 text-6xl" style="font-variation-settings: 'FILL' 1;">admin_panel_settings</span>
+            <h1 class="font-headline-md text-3xl text-white mt-3">Admin password</h1>
+            <p class="text-on-surface-variant mt-2">Enter the admin password to open the control panel.</p>
+          </div>
+          <form id="adminUnlockForm" class="relative z-10 flex flex-col gap-4">
+            <input id="adminPassword" name="adminPassword" type="password" inputmode="numeric" autocomplete="current-password" placeholder="Password" class="w-full bg-surface-container-high/70 border border-outline/30 rounded-lg py-4 px-4 text-on-surface font-body-base focus:outline-none focus:border-primary-container/60 focus:ring-1 focus:ring-primary-container/60" />
+            <button class="glow-button bg-primary-container text-on-primary font-headline-md text-[20px] py-4 rounded-lg flex items-center justify-center gap-2" type="submit">
+              <span class="material-symbols-outlined">lock_open</span>
+              Unlock admin
+            </button>
+          </form>
+        </div>
+      </section>
+    `;
+  }
+
+  function adminWinnersEditor(studentOptions) {
+    const winners = [...state.winners].sort((a, b) => {
+      const av = Number(a.award_year) * 100 + Number(a.month_number);
+      const bv = Number(b.award_year) * 100 + Number(b.month_number);
+      return bv - av;
+    });
+    if (!winners.length) return emptyPanel("No winners to edit yet.", "Record winners first, then they will appear here for correction.");
+
+    return `
+      <div class="glass-panel rounded-xl p-6">
+        <h2 class="font-headline-md text-2xl text-white mb-2">Edit recorded winners</h2>
+        <p class="text-on-surface-variant mb-5">Correct wrong monthly winner entries here instead of changing SQL.</p>
+        <div class="space-y-3">
+          ${winners.map(w => {
+            const s = studentById(w.student_id);
+            return `
+              <form id="winnerEditForm" class="rounded-xl border border-white/10 bg-black/20 p-4 grid grid-cols-1 md:grid-cols-12 gap-3 items-start">
+                <input type="hidden" name="winnerId" value="${escapeAttr(w.id)}" />
+                <input name="editWinnerYear" type="number" value="${escapeAttr(w.award_year)}" class="md:col-span-2 bg-surface-container-high/50 border border-outline/30 rounded-lg py-3 px-4 text-on-surface" />
+                <select name="editWinnerMonth" class="md:col-span-2 bg-surface-container-high/50 border border-outline/30 rounded-lg py-3 px-4 text-on-surface">
+                  ${MONTHS.map((m, idx) => `<option value="${idx + 1}" ${idx + 1 === Number(w.month_number) ? "selected" : ""}>${m}</option>`).join("")}
+                </select>
+                <input list="adminStudentList" name="editWinnerStudent" value="${escapeAttr(s?.full_name || "")}" class="md:col-span-3 bg-surface-container-high/50 border border-outline/30 rounded-lg py-3 px-4 text-on-surface" />
+                <select name="editWinnerSlot" class="md:col-span-2 bg-surface-container-high/50 border border-outline/30 rounded-lg py-3 px-4 text-on-surface">
+                  <option value="girl" ${String(w.slot || s?.gender) === "girl" ? "selected" : ""}>Girl</option>
+                  <option value="boy" ${String(w.slot || s?.gender) === "boy" ? "selected" : ""}>Boy</option>
+                </select>
+                <button type="submit" class="md:col-span-1 rounded-lg bg-primary-container text-on-primary py-3 font-label-sm text-label-sm uppercase">Save</button>
+                <button type="button" data-delete-winner="${escapeAttr(w.id)}" class="md:col-span-2 rounded-lg border border-red-400/30 text-red-200 bg-red-500/10 py-3 font-label-sm text-label-sm uppercase">Delete</button>
+              </form>
+            `;
+          }).join("")}
+        </div>
+      </div>
+    `;
+  }
+
+  function adminNominationsEditor(studentOptions) {
+    const nominations = [...state.nominations].sort((a, b) => {
+      if (a.status !== b.status) return a.status === "active" ? -1 : 1;
+      return String(studentById(a.student_id)?.full_name || "").localeCompare(String(studentById(b.student_id)?.full_name || ""));
+    });
+    if (!nominations.length) return emptyPanel("No nominations to edit yet.", "Nominations will appear here after teachers start voting.");
+
+    return `
+      <div class="glass-panel rounded-xl p-6">
+        <h2 class="font-headline-md text-2xl text-white mb-2">Edit nominations</h2>
+        <p class="text-on-surface-variant mb-5">Change the student, original teacher, accolade, nomination month, year, or status. Delete removes the nomination and its reactions/reasons.</p>
+        <div class="space-y-4">
+          ${nominations.map(n => {
+            const s = studentById(n.student_id);
+            return `
+              <form id="nominationEditForm" class="rounded-xl border border-white/10 bg-black/20 p-4 grid grid-cols-1 md:grid-cols-12 gap-3 items-start">
+                <input type="hidden" name="nominationId" value="${escapeAttr(n.id)}" />
+                <input list="adminStudentList" name="editNominationStudent" value="${escapeAttr(s?.full_name || "")}" class="md:col-span-3 bg-surface-container-high/50 border border-outline/30 rounded-lg py-3 px-4 text-on-surface" />
+                <input name="editNominationTeacher" value="${escapeAttr(n.original_teacher || "")}" placeholder="Original teacher" class="md:col-span-3 bg-surface-container-high/50 border border-outline/30 rounded-lg py-3 px-4 text-on-surface" />
+                <select name="editNominationMonth" class="md:col-span-2 bg-surface-container-high/50 border border-outline/30 rounded-lg py-3 px-4 text-on-surface">
+                  ${MONTHS.map((m, idx) => `<option value="${idx + 1}" ${idx + 1 === Number(n.first_month_number) ? "selected" : ""}>${m}</option>`).join("")}
+                </select>
+                <input name="editNominationYear" type="number" value="${escapeAttr(n.first_year || new Date().getFullYear())}" class="md:col-span-2 bg-surface-container-high/50 border border-outline/30 rounded-lg py-3 px-4 text-on-surface" />
+                <select name="editNominationStatus" class="md:col-span-2 bg-surface-container-high/50 border border-outline/30 rounded-lg py-3 px-4 text-on-surface">
+                  <option value="active" ${n.status === "active" ? "selected" : ""}>Active</option>
+                  <option value="closed" ${n.status === "closed" ? "selected" : ""}>Closed</option>
+                  <option value="withdrawn" ${n.status === "withdrawn" ? "selected" : ""}>Withdrawn</option>
+                </select>
+                <textarea name="editNominationReason" rows="4" class="md:col-span-12 bg-surface-container-high/50 border border-outline/30 rounded-lg py-3 px-4 text-on-surface resize-none">${escapeHtml(n.original_reason || "")}</textarea>
+                <div class="md:col-span-12 flex flex-col md:flex-row md:justify-between gap-3">
+                  <p class="text-xs text-on-surface-variant">Current score: ${nominationStats(n.id).score} · Up ${nominationStats(n.id).up} / Down ${nominationStats(n.id).down} · First nominated ${escapeHtml(n.first_month_name || "Unknown")} ${escapeHtml(n.first_year || "")}</p>
+                  <div class="flex gap-2">
+                    <button type="submit" class="rounded-lg bg-primary-container text-on-primary px-5 py-3 font-label-sm text-label-sm uppercase">Save nomination</button>
+                    <button type="button" data-delete-nomination="${escapeAttr(n.id)}" class="rounded-lg border border-red-400/30 text-red-200 bg-red-500/10 px-5 py-3 font-label-sm text-label-sm uppercase">Delete</button>
+                  </div>
+                </div>
+              </form>
+            `;
+          }).join("")}
+        </div>
+      </div>
+    `;
+  }
+
+  function getPrintFilter() {
+    const now = new Date();
+    const year = Number(sessionStorage.getItem("scls-sotm-print-year")) || now.getFullYear();
+    const monthNumber = Number(sessionStorage.getItem("scls-sotm-print-month")) || now.getMonth() + 1;
+    return { year, monthNumber };
+  }
+
+  function winnerPrintPacket(year, monthNumber) {
+    const monthName = MONTHS[monthNumber - 1] || "Month";
+    const winners = state.winners
+      .filter(w => Number(w.award_year) === Number(year) && Number(w.month_number) === Number(monthNumber))
+      .sort((a, b) => String(a.slot).localeCompare(String(b.slot)) || String(studentById(a.student_id)?.full_name || "").localeCompare(String(studentById(b.student_id)?.full_name || "")));
+
+    if (!winners.length) {
+      return `<div id="winnerPrintPacket" class="print-area rounded-xl border border-white/10 bg-black/20 p-6 text-center text-on-surface-variant">No recorded winners for ${escapeHtml(monthName)} ${escapeHtml(year)} yet.</div>`;
+    }
+
+    return `
+      <div id="winnerPrintPacket" class="print-area rounded-xl border border-white/10 bg-black/20 p-5 md:p-8">
+        <div class="text-center mb-6">
+          <p class="font-label-sm text-label-sm uppercase tracking-widest text-yellow-500">SCLS Grade 6 Student of the Month</p>
+          <h2 class="font-headline-md text-3xl text-white mt-2">${escapeHtml(monthName)} ${escapeHtml(year)} Winners</h2>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          ${winners.map(w => winnerCertificateCard(w)).join("")}
+        </div>
+      </div>
+    `;
+  }
+
+  function winnerCertificateCard(winner) {
+    const student = studentById(winner.student_id);
+    if (!student) return "";
+    const nomination = nominationForStudentAny(student.id);
+    const stats = nomination ? nominationStats(nomination.id) : null;
+    const allReasons = nomination ? state.reasons.filter(r => String(r.nomination_id) === String(nomination.id)) : [];
+    const mainReason = nomination?.original_reason || "No nomination accolade found for this student.";
+    const uniqueReasons = [];
+    for (const r of allReasons) {
+      if (r.reason && !uniqueReasons.some(x => sameText(x.reason, r.reason))) uniqueReasons.push(r);
+    }
+
+    return `
+      <article class="rounded-xl border border-white/10 bg-white/5 p-5 break-inside-avoid">
+        <div class="flex items-start gap-3 mb-3">
+          ${avatar(student.full_name, "w-12 h-12")}
+          <div>
+            <h3 class="font-headline-md text-2xl text-white">${escapeHtml(student.full_name)}</h3>
+            <p class="text-yellow-300 text-sm">Homeroom ${escapeHtml(student.homeroom)} · ${escapeHtml(cap(winner.slot || student.gender))}</p>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-2 text-sm mb-4">
+          <div class="rounded-lg bg-black/20 border border-white/10 p-2"><strong class="text-white">Nominated:</strong><br>${escapeHtml(nomination?.first_month_name || "Unknown")} ${escapeHtml(nomination?.first_year || "")}</div>
+          <div class="rounded-lg bg-black/20 border border-white/10 p-2"><strong class="text-white">Votes:</strong><br>${stats ? `${stats.score} net · ${stats.up} up / ${stats.down} down` : "No vote data"}</div>
+        </div>
+        <p class="font-label-sm text-label-sm uppercase tracking-widest text-yellow-500 mb-2">Certificate accolade</p>
+        <p class="text-on-surface leading-relaxed">${escapeHtml(mainReason)}</p>
+        ${uniqueReasons.length > 1 ? `
+          <div class="mt-4 border-t border-white/10 pt-3">
+            <p class="font-label-sm text-label-sm uppercase tracking-widest text-on-surface-variant mb-2">Additional teacher wording</p>
+            <div class="space-y-2">
+              ${uniqueReasons.filter(r => !sameText(r.reason, mainReason)).map(r => `<p class="text-sm text-on-surface-variant"><strong class="text-on-surface">${escapeHtml(r.teacher_name)}:</strong> ${escapeHtml(r.reason)}</p>`).join("")}
+            </div>
+          </div>
+        ` : ""}
+      </article>
+    `;
+  }
+
+  function nominationForStudentAny(studentId) {
+    return [...state.nominations]
+      .filter(n => String(n.student_id) === String(studentId))
+      .sort((a, b) => {
+        if (a.status !== b.status) return a.status === "active" ? -1 : 1;
+        const av = Number(a.first_year || 0) * 100 + Number(a.first_month_number || 0);
+        const bv = Number(b.first_year || 0) * 100 + Number(b.first_month_number || 0);
+        return bv - av;
+      })[0];
   }
 
   function nominationGrid(nominations) {
@@ -508,6 +720,7 @@
                   <div class="flex flex-wrap items-center gap-2 mt-2">
                     <span class="badge rounded-full px-2 py-1 font-label-sm text-label-sm text-on-surface-variant">Homeroom ${escapeHtml(student.homeroom)}</span>
                     <span class="badge rounded-full px-2 py-1 font-label-sm text-label-sm ${student.gender === "girl" ? "text-pink-200" : "text-blue-200"}">${escapeHtml(cap(student.gender))}</span>
+                    <span class="badge rounded-full px-2 py-1 font-label-sm text-label-sm text-yellow-200">Nominated ${escapeHtml(nom.first_month_name || "Unknown")} ${escapeHtml(nom.first_year || "")}</span>
                     <span class="rounded-full px-2 py-1 font-label-sm text-label-sm ${eligible ? "bg-emerald-500/10 border border-emerald-400/20 text-emerald-200" : "bg-red-500/10 border border-red-400/20 text-red-200"}">${eligible ? "New candidate" : "Already won"}</span>
                   </div>
                 </div>
@@ -728,11 +941,24 @@
       return;
     }
 
-    if (event.target.closest("#switchTeacherInline")) {
-      localStorage.removeItem(TEACHER_KEY);
-      state.currentTeacher = "";
-      draw();
+    const printBtn = event.target.closest("[data-print-winners]");
+    if (printBtn) {
+      window.print();
+      return;
     }
+
+    const deleteWinnerBtn = event.target.closest("[data-delete-winner]");
+    if (deleteWinnerBtn) {
+      if (confirm("Delete this recorded winner?")) await deleteWinner(deleteWinnerBtn.dataset.deleteWinner);
+      return;
+    }
+
+    const deleteNominationBtn = event.target.closest("[data-delete-nomination]");
+    if (deleteNominationBtn) {
+      if (confirm("Delete this nomination and its reactions/reasons?")) await deleteNomination(deleteNominationBtn.dataset.deleteNomination);
+      return;
+    }
+
   }
 
   function handleInput(event) {
@@ -744,6 +970,18 @@
   }
 
   async function handleSubmit(event) {
+    if (event.target.id === "adminUnlockForm") {
+      event.preventDefault();
+      const data = new FormData(event.target);
+      const password = String(data.get("adminPassword") || "").trim();
+      if (password !== ADMIN_PASSWORD) return toast("Incorrect admin password.", "warning");
+      state.adminUnlocked = true;
+      sessionStorage.setItem(ADMIN_AUTH_KEY, "yes");
+      toast("Admin unlocked.", "success");
+      draw();
+      return;
+    }
+
     if (event.target.id === "loginForm") {
       event.preventDefault();
       const teacher = $("#teacherSelect").value;
@@ -776,6 +1014,29 @@
       const data = new FormData(event.target);
       await addAlert(String(data.get("alertStudent") || ""), String(data.get("alertSeverity") || "info"), String(data.get("alertNote") || ""));
       event.target.reset();
+      return;
+    }
+
+    if (event.target.id === "printFilterForm") {
+      event.preventDefault();
+      const data = new FormData(event.target);
+      sessionStorage.setItem("scls-sotm-print-year", String(Number(data.get("printYear"))));
+      sessionStorage.setItem("scls-sotm-print-month", String(Number(data.get("printMonth"))));
+      draw();
+      return;
+    }
+
+    if (event.target.id === "winnerEditForm") {
+      event.preventDefault();
+      const data = new FormData(event.target);
+      await updateWinner(data);
+      return;
+    }
+
+    if (event.target.id === "nominationEditForm") {
+      event.preventDefault();
+      const data = new FormData(event.target);
+      await updateNomination(data);
       return;
     }
 
@@ -988,6 +1249,11 @@
 
     const students = names.map(findStudentByName);
     if (students.some(s => !s)) return toast("Every winner name must match the Grade 6 student list.", "warning");
+    if (new Set(students.map(s => String(s.id))).size !== 4) return toast("The four winner names must be four different students.", "warning");
+
+    const firstTwoGirls = students.slice(0, 2).every(s => s.gender === "girl");
+    const lastTwoBoys = students.slice(2).every(s => s.gender === "boy");
+    if (!firstTwoGirls || !lastTwoBoys) return toast("Use the first two boxes for girls and the last two boxes for boys.", "warning");
 
     const rows = students.map((student, index) => ({
       id: uid("win"),
@@ -996,25 +1262,123 @@
       month_name: monthName,
       student_id: student.id,
       slot: index < 2 ? "girl" : "boy",
-      recorded_by: state.currentTeacher
+      recorded_by: state.currentTeacher,
+      created_at: new Date().toISOString()
     }));
 
     if (usingSupabase) {
-      const { error } = await sb.from("winners").upsert(rows.map(({ id, ...r }) => r), {
-        onConflict: "award_year,month_number,student_id"
-      });
+      const del = await sb.from("winners").delete().eq("award_year", year).eq("month_number", monthNumber);
+      if (del.error) return toast(del.error.message, "warning");
+      const { error } = await sb.from("winners").insert(rows.map(({ id, created_at, ...r }) => r));
       if (error) return toast(error.message, "warning");
       await reloadIfLive();
     } else {
-      for (const row of rows) {
-        const exists = state.winners.some(w => Number(w.award_year) === year && Number(w.month_number) === monthNumber && String(w.student_id) === String(row.student_id));
-        if (!exists) state.winners.push(row);
-      }
+      state.winners = state.winners.filter(w => !(Number(w.award_year) === year && Number(w.month_number) === monthNumber));
+      state.winners.push(...rows);
       saveLocal();
     }
 
-    toast(`${monthName} winners recorded.`, "success");
-    go("hall");
+    sessionStorage.setItem("scls-sotm-print-year", String(year));
+    sessionStorage.setItem("scls-sotm-print-month", String(monthNumber));
+    toast(`${monthName} winners recorded and ready to print.`, "success");
+    state.route = "admin";
+    location.hash = "admin";
+    draw();
+  }
+
+  async function updateWinner(formData) {
+    const winnerId = String(formData.get("winnerId") || "");
+    const year = Number(formData.get("editWinnerYear"));
+    const monthNumber = Number(formData.get("editWinnerMonth"));
+    const monthName = MONTHS[monthNumber - 1];
+    const student = findStudentByName(String(formData.get("editWinnerStudent") || ""));
+    const slot = String(formData.get("editWinnerSlot") || "");
+
+    if (!winnerId) return toast("Missing winner id.", "warning");
+    if (!student) return toast("Winner student name must match the Grade 6 list.", "warning");
+    if (!["girl", "boy"].includes(slot)) return toast("Select Girl or Boy slot.", "warning");
+
+    const patch = { award_year: year, month_number: monthNumber, month_name: monthName, student_id: student.id, slot, recorded_by: state.currentTeacher };
+
+    if (usingSupabase) {
+      const { error } = await sb.from("winners").update(patch).eq("id", winnerId);
+      if (error) return toast(error.message, "warning");
+      await reloadIfLive();
+    } else {
+      const row = state.winners.find(w => String(w.id) === winnerId);
+      if (row) Object.assign(row, patch);
+      saveLocal();
+    }
+
+    toast("Winner updated.", "success");
+    draw();
+  }
+
+  async function deleteWinner(winnerId) {
+    if (usingSupabase) {
+      const { error } = await sb.from("winners").delete().eq("id", winnerId);
+      if (error) return toast(error.message, "warning");
+      await reloadIfLive();
+    } else {
+      state.winners = state.winners.filter(w => String(w.id) !== String(winnerId));
+      saveLocal();
+    }
+    toast("Winner deleted.", "success");
+    draw();
+  }
+
+  async function updateNomination(formData) {
+    const nominationId = String(formData.get("nominationId") || "");
+    const student = findStudentByName(String(formData.get("editNominationStudent") || ""));
+    const originalTeacher = String(formData.get("editNominationTeacher") || "").trim();
+    const originalReason = String(formData.get("editNominationReason") || "").trim();
+    const firstMonthNumber = Number(formData.get("editNominationMonth"));
+    const firstMonthName = MONTHS[firstMonthNumber - 1];
+    const firstYear = Number(formData.get("editNominationYear"));
+    const status = String(formData.get("editNominationStatus") || "active");
+
+    if (!nominationId) return toast("Missing nomination id.", "warning");
+    if (!student) return toast("Nomination student name must match the Grade 6 list.", "warning");
+    if (!originalTeacher) return toast("Original teacher is required.", "warning");
+    if (originalReason.length < 5) return toast("Nomination reason is too short.", "warning");
+    if (!["active", "closed", "withdrawn"].includes(status)) return toast("Invalid nomination status.", "warning");
+
+    const patch = {
+      student_id: student.id,
+      original_teacher: originalTeacher,
+      original_reason: originalReason,
+      first_month_name: firstMonthName,
+      first_month_number: firstMonthNumber,
+      first_year: firstYear,
+      status
+    };
+
+    if (usingSupabase) {
+      const { error } = await sb.from("nominations").update(patch).eq("id", nominationId);
+      if (error) return toast(error.message, "warning");
+      await reloadIfLive();
+    } else {
+      const row = state.nominations.find(n => String(n.id) === nominationId);
+      if (row) Object.assign(row, patch, { updated_at: new Date().toISOString() });
+      saveLocal();
+    }
+
+    toast("Nomination updated.", "success");
+    draw();
+  }
+
+  async function deleteNomination(nominationId) {
+    if (usingSupabase) {
+      const { error } = await sb.from("nominations").delete().eq("id", nominationId);
+      if (error) return toast(error.message, "warning");
+      await reloadIfLive();
+    } else {
+      state.nominations = state.nominations.filter(n => String(n.id) !== String(nominationId));
+      state.reasons = state.reasons.filter(r => String(r.nomination_id) !== String(nominationId));
+      state.reactions = state.reactions.filter(r => String(r.nomination_id) !== String(nominationId));
+      saveLocal();
+    }
+    toast("Nomination deleted.", "success");
     draw();
   }
 

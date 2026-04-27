@@ -49,3 +49,53 @@ input[list]::-webkit-calendar-picker-indicator { display: none !important; }
 .badge { border: 1px solid rgba(255,255,255,0.10); background: rgba(255,255,255,0.06); }
 button:disabled { opacity: 0.45; cursor: not-allowed; transform: none !important; }
 mark { background: rgba(255, 215, 0, 0.18); color: #fff6df; padding: 0 0.2em; border-radius: 0.25rem; }
+
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    min-height: auto !important;
+  }
+  body * {
+    visibility: hidden !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+  #winnerPrintPacket,
+  #winnerPrintPacket * {
+    visibility: visible !important;
+  }
+  #winnerPrintPacket {
+    position: absolute !important;
+    inset: 0 auto auto 0 !important;
+    width: 100% !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    border: none !important;
+    padding: 18mm !important;
+  }
+  #winnerPrintPacket article {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    border: 1px solid #d0d0d0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin-bottom: 8mm;
+  }
+  #winnerPrintPacket .name-initials,
+  #winnerPrintPacket .badge {
+    border: 1px solid #999999 !important;
+    background: #f4f4f4 !important;
+    color: #000000 !important;
+  }
+  #winnerPrintPacket .text-white,
+  #winnerPrintPacket .text-on-surface,
+  #winnerPrintPacket .text-on-surface-variant,
+  #winnerPrintPacket .text-yellow-300,
+  #winnerPrintPacket .text-yellow-500 {
+    color: #000000 !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
