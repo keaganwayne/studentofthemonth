@@ -246,8 +246,9 @@
 
   function homeView() {
     const active = activeNominationsSorted();
-    const now = new Date();
-    const monthName = MONTHS[now.getMonth()];
+    const votingWindow = getVotingWindow();
+    const nominationTarget = getNominationTargetWindow();
+    const votingClosed = isVotingClosed(votingWindow);
     const topGirls = candidateLeaders("girl").slice(0, 2);
     const topBoys = candidateLeaders("boy").slice(0, 2);
 
@@ -258,7 +259,9 @@
         </div>
         <h1 class="font-display-lg text-display-lg text-primary-container">Grade 6 Nominees</h1>
         <p class="font-body-base text-body-base text-on-surface-variant mt-2 max-w-2xl mx-auto">
-          ${escapeHtml(monthName)} voting is open. Final target: two girls and two boys for Grade 6.
+          ${votingClosed
+            ? `${escapeHtml(votingWindow.monthName)} voting is closed. New nominations now save for ${escapeHtml(nominationTarget.monthName)} ${escapeHtml(nominationTarget.year)}.`
+            : `${escapeHtml(votingWindow.monthName)} voting is open. Final target: two girls and two boys for Grade 6.`}
         </p>
       </section>
 
@@ -266,7 +269,7 @@
         <div class="lg:col-span-4 glass-panel rounded-xl p-5">
           <p class="font-label-sm text-label-sm uppercase tracking-widest text-yellow-500 mb-2">Countdown</p>
           <h2 id="countdownText" class="font-headline-md text-3xl text-white">--</h2>
-          <p class="text-on-surface-variant text-sm mt-2">Current voting window.</p>
+          <p class="text-on-surface-variant text-sm mt-2">${votingClosed ? `Closed for ${escapeHtml(votingWindow.monthName)}. New nominations save for ${escapeHtml(nominationTarget.monthName)}.` : `Current window: ${escapeHtml(votingWindow.monthName)} ${escapeHtml(votingWindow.year)}.`}</p>
         </div>
         <div class="lg:col-span-4 glass-panel rounded-xl p-5">
           <p class="font-label-sm text-label-sm uppercase tracking-widest text-yellow-500 mb-2">Top girls right now</p>
@@ -288,7 +291,7 @@
             Cast new vote
           </button>
         </div>
-        ${active.length ? nominationGrid(active) : emptyPanel("No current nominations yet.", "Use Cast New Vote to start the April list.")}
+        ${active.length ? nominationGrid(active) : emptyPanel("No current nominations yet.", `Use Cast New Vote to start the ${nominationTarget.monthName} list.`)}
       </section>
 
       <section>
@@ -302,6 +305,9 @@
   }
 
   function voteView() {
+    const votingWindow = getVotingWindow();
+    const nominationTarget = getNominationTargetWindow();
+    const votingClosed = isVotingClosed(votingWindow);
     const studentOptions = state.students
       .sort((a, b) => a.full_name.localeCompare(b.full_name))
       .map(s => `<option value="${escapeAttr(s.full_name)}">${escapeHtml(s.homeroom)} · ${escapeHtml(cap(s.gender))}</option>`)
@@ -311,7 +317,11 @@
       <section class="max-w-[860px] mx-auto">
         <div class="mb-10 text-center">
           <h1 class="font-display-lg text-display-lg text-primary mb-2 tracking-tight">Nominate a Student</h1>
-          <p class="font-body-base text-body-base text-on-surface-variant">Search the student name, check the warning panel, then write a specific reason.</p>
+          <p class="font-body-base text-body-base text-on-surface-variant">
+            ${votingClosed
+              ? `${escapeHtml(votingWindow.monthName)} voting is closed. New nominations submitted now will be saved for ${escapeHtml(nominationTarget.monthName)} ${escapeHtml(nominationTarget.year)}.`
+              : `New nominations are being saved for ${escapeHtml(nominationTarget.monthName)} ${escapeHtml(nominationTarget.year)}.`}
+          </p>
         </div>
 
         <div class="glass-panel rounded-xl p-6 md:p-10 relative overflow-hidden">
@@ -404,15 +414,14 @@
     }
     if (!state.adminUnlocked) return adminPasswordView();
 
-    const deadline = getDeadline();
-    const deadlineValue = toLocalDatetimeValue(deadline);
+    const votingWindow = getVotingWindow();
+    const deadlineValue = toLocalDatetimeValue(votingWindow.deadline);
     const studentOptions = state.students
       .sort((a, b) => a.full_name.localeCompare(b.full_name))
       .map(s => `<option value="${escapeAttr(s.full_name)}">${escapeHtml(s.homeroom)} · ${escapeHtml(cap(s.gender))}</option>`)
       .join("");
-    const now = new Date();
-    const monthNum = now.getMonth() + 1;
-    const currentMonth = MONTHS[monthNum - 1];
+    const monthNum = votingWindow.monthNumber;
+    const currentMonth = votingWindow.monthName;
     const leadersGirls = candidateLeaders("girl").slice(0, 2);
     const leadersBoys = candidateLeaders("boy").slice(0, 2);
     const printFilter = getPrintFilter();
@@ -425,10 +434,17 @@
 
       <section class="grid grid-cols-1 lg:grid-cols-12 gap-gutter">
         <div class="lg:col-span-5 glass-panel rounded-xl p-6">
-          <h2 class="font-headline-md text-2xl text-white mb-4">Voting deadline</h2>
+          <h2 class="font-headline-md text-2xl text-white mb-4">Voting window</h2>
           <form id="deadlineForm" class="flex flex-col gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <input id="votingYearInput" name="votingYear" type="number" value="${escapeAttr(votingWindow.year)}" class="w-full bg-surface-container-high/50 border border-outline/30 rounded-lg py-3 px-4 text-on-surface focus:outline-none focus:border-primary-container/50" />
+              <select id="votingMonthInput" name="votingMonth" class="w-full bg-surface-container-high/50 border border-outline/30 rounded-lg py-3 px-4 text-on-surface focus:outline-none focus:border-primary-container/50">
+                ${MONTHS.map((m, idx) => `<option value="${idx + 1}" ${idx + 1 === monthNum ? "selected" : ""}>${m}</option>`).join("")}
+              </select>
+            </div>
             <input id="deadlineInput" name="deadlineInput" type="datetime-local" value="${escapeAttr(deadlineValue)}" class="w-full bg-surface-container-high/50 border border-outline/30 rounded-lg py-3 px-4 text-on-surface focus:outline-none focus:border-primary-container/50" />
-            <button class="bg-primary-container text-on-primary rounded-lg py-3 font-label-sm text-label-sm uppercase glow-button" type="submit">Save deadline</button>
+            <p class="text-xs text-on-surface-variant">This controls the homepage month, countdown, and month used for new nominations while voting is open.</p>
+            <button class="bg-primary-container text-on-primary rounded-lg py-3 font-label-sm text-label-sm uppercase glow-button" type="submit">Save voting window</button>
           </form>
         </div>
 
@@ -458,7 +474,7 @@
             </div>
           </div>
           <form id="winnerForm" class="grid grid-cols-1 md:grid-cols-6 gap-3">
-            <input name="winnerYear" type="number" value="${now.getFullYear()}" class="bg-surface-container-high/50 border border-outline/30 rounded-lg py-3 px-4 text-on-surface" />
+            <input name="winnerYear" type="number" value="${escapeAttr(votingWindow.year)}" class="bg-surface-container-high/50 border border-outline/30 rounded-lg py-3 px-4 text-on-surface" />
             <select name="winnerMonth" class="bg-surface-container-high/50 border border-outline/30 rounded-lg py-3 px-4 text-on-surface">
               ${MONTHS.map((m, idx) => `<option value="${idx + 1}" ${idx + 1 === monthNum ? "selected" : ""}>${m}</option>`).join("")}
             </select>
@@ -913,8 +929,8 @@
             <span class="badge rounded-full px-2 py-1 text-xs">${escapeHtml(cap(student.gender))}</span>
           </div>
           <div class="space-y-2 text-sm">
-            ${won ? warningBlock(`Already won in ${won.month_name} ${won.award_year}. The vote will still be recorded, but teachers will see this flag.`) : `<p class="text-emerald-200">No previous win recorded this year.</p>`}
-            ${nomination ? warningBlock(`Already on the active nomination list. Your reason will be added to the existing nomination, and your support reaction will be recorded once.`) : `<p class="text-emerald-200">Not currently nominated. Submitting will create a new nomination card.</p>`}
+            ${won ? warningBlock(`Already won in ${won.month_name} ${won.award_year}. A new reason can still be stored, but this student will not appear in the active nomination list.`) : `<p class="text-emerald-200">No previous win recorded this year.</p>`}
+            ${nomination ? warningBlock(`Already on the nomination list. Your reason will be added to the existing nomination, and your support reaction will be recorded once.`) : won ? `<p class="text-yellow-100">Not currently visible as a candidate because a win is already recorded.</p>` : `<p class="text-emerald-200">Not currently nominated. Submitting will create a ${escapeHtml(getNominationTargetWindow().monthName)} nomination card.</p>`}
             ${alerts.length ? alerts.map(a => warningBlock(`${cap(a.severity)}: ${a.note}`, a.severity)).join("") : ""}
           </div>
         </div>
@@ -1002,9 +1018,13 @@
 
     if (event.target.id === "deadlineForm") {
       event.preventDefault();
-      const value = $("#deadlineInput").value;
-      await saveSetting("countdown_deadline", { iso: new Date(value).toISOString() });
-      toast("Deadline updated.", "success");
+      const data = new FormData(event.target);
+      const year = Number(data.get("votingYear"));
+      const monthNumber = Number(data.get("votingMonth"));
+      const value = String(data.get("deadlineInput") || "");
+      const deadline = value ? new Date(value) : defaultDeadlineFor(year, monthNumber);
+      await saveVotingWindow(year, monthNumber, deadline);
+      toast(`${MONTHS[monthNumber - 1]} voting window saved.`, "success");
       draw();
       return;
     }
@@ -1070,16 +1090,16 @@
       return;
     }
 
-    const now = new Date();
+    const targetWindow = getNominationTargetWindow();
     const nomination = {
       id: uid("nom"),
       student_id: student.id,
       original_teacher: state.currentTeacher,
       original_reason: reason,
-      first_month_name: MONTHS[now.getMonth()],
-      first_month_number: now.getMonth() + 1,
-      first_year: now.getFullYear(),
-      status: "active"
+      first_month_name: targetWindow.monthName,
+      first_month_number: targetWindow.monthNumber,
+      first_year: targetWindow.year,
+      status: won ? "closed" : "active"
     };
 
     if (usingSupabase) {
@@ -1100,7 +1120,7 @@
 
     await addReason(nomination.id, state.currentTeacher, reason, { silent: true });
 
-    toast(`${student.full_name} has been nominated.${won ? " Note: this student has already won earlier this year." : ""}`, won ? "warning" : "success");
+    toast(`${student.full_name} has been nominated for ${nomination.first_month_name} ${nomination.first_year}.${won ? " This student has already won, so the nomination is stored but not shown in the active list." : ""}`, won ? "warning" : "success");
     go("home");
     await reloadIfLive();
     saveLocal();
@@ -1266,21 +1286,47 @@
       created_at: new Date().toISOString()
     }));
 
+    const winnerStudentIds = students.map(s => s.id);
+    const activeWindowBeforeSave = getVotingWindow();
+    const shouldAdvanceWindow = Number(activeWindowBeforeSave.year) === year && Number(activeWindowBeforeSave.monthNumber) === monthNumber;
+    const nextWindow = shouldAdvanceWindow ? nextVotingWindow(activeWindowBeforeSave) : null;
+
     if (usingSupabase) {
       const del = await sb.from("winners").delete().eq("award_year", year).eq("month_number", monthNumber);
       if (del.error) return toast(del.error.message, "warning");
       const { error } = await sb.from("winners").insert(rows.map(({ id, created_at, ...r }) => r));
       if (error) return toast(error.message, "warning");
-      await reloadIfLive();
+      const close = await sb.from("nominations").update({ status: "closed", updated_at: new Date().toISOString() }).in("student_id", winnerStudentIds).eq("status", "active");
+      if (close.error) return toast(close.error.message, "warning");
+      if (shouldAdvanceWindow) {
+        await saveVotingWindow(nextWindow.year, nextWindow.monthNumber, nextWindow.deadline);
+      } else {
+        await reloadIfLive();
+      }
     } else {
       state.winners = state.winners.filter(w => !(Number(w.award_year) === year && Number(w.month_number) === monthNumber));
       state.winners.push(...rows);
+      state.nominations.forEach(n => {
+        if (winnerStudentIds.some(id => String(id) === String(n.student_id)) && n.status === "active") n.status = "closed";
+      });
+      if (shouldAdvanceWindow) {
+        const value = {
+          year: nextWindow.year,
+          monthNumber: nextWindow.monthNumber,
+          monthName: nextWindow.monthName,
+          deadlineIso: nextWindow.deadline.toISOString()
+        };
+        const existing = state.settings.find(s => s.key === "voting_window");
+        if (existing) Object.assign(existing, { value, updated_by: state.currentTeacher, updated_at: new Date().toISOString() });
+        else state.settings.push({ key: "voting_window", value, updated_by: state.currentTeacher, updated_at: new Date().toISOString() });
+      }
       saveLocal();
     }
 
     sessionStorage.setItem("scls-sotm-print-year", String(year));
     sessionStorage.setItem("scls-sotm-print-month", String(monthNumber));
-    toast(`${monthName} winners recorded and ready to print.`, "success");
+    const advanceNote = shouldAdvanceWindow ? ` Voting window moved to ${nextWindow.monthName} ${nextWindow.year}.` : "";
+    toast(`${monthName} winners recorded and removed from the active nomination list.${advanceNote}`, "success");
     state.route = "admin";
     location.hash = "admin";
     draw();
@@ -1391,7 +1437,7 @@
     return state.nominations
       .filter(n => n.status === "active")
       .map(n => ({ nom: n, stats: nominationStats(n.id), student: studentById(n.student_id) }))
-      .filter(x => x.student)
+      .filter(x => x.student && !winnerForStudent(x.student.id))
       .sort((a, b) => b.stats.score - a.stats.score || a.student.full_name.localeCompare(b.student.full_name))
       .map(x => x.nom);
   }
@@ -1457,12 +1503,67 @@
     return state.settings.find(s => s.key === key)?.value;
   }
 
-  function getDeadline() {
-    const iso = getSetting("countdown_deadline")?.iso;
-    const parsed = iso ? new Date(iso) : null;
-    if (parsed && !Number.isNaN(parsed.getTime())) return parsed;
+  function defaultDeadlineFor(year, monthNumber) {
+    const y = Number(year) || new Date().getFullYear();
+    const m = Number(monthNumber) || (new Date().getMonth() + 1);
+    return new Date(y, m, 0, 16, 0, 0);
+  }
+
+  function getVotingWindow() {
     const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth() + 1, 0, 16, 0, 0);
+    const saved = getSetting("voting_window") || {};
+    const fallbackDeadline = getSetting("countdown_deadline")?.iso;
+    const monthNumber = Number(saved.monthNumber) || now.getMonth() + 1;
+    const year = Number(saved.year) || now.getFullYear();
+    const monthName = MONTHS[monthNumber - 1] || MONTHS[now.getMonth()];
+    const iso = saved.deadlineIso || saved.iso || fallbackDeadline;
+    const parsed = iso ? new Date(iso) : null;
+    const deadline = parsed && !Number.isNaN(parsed.getTime()) ? parsed : defaultDeadlineFor(year, monthNumber);
+    const windowInfo = { year, monthNumber, monthName, deadline };
+    const hasFullWinnerSet = state.winners.filter(w => Number(w.award_year) === year && Number(w.month_number) === monthNumber).length >= 4;
+    if (deadline.getTime() <= Date.now() && hasFullWinnerSet) {
+      return nextVotingWindow(windowInfo);
+    }
+    return windowInfo;
+  }
+
+  function nextVotingWindow(windowInfo = getVotingWindow()) {
+    let monthNumber = Number(windowInfo.monthNumber) + 1;
+    let year = Number(windowInfo.year);
+    if (monthNumber > 12) {
+      monthNumber = 1;
+      year += 1;
+    }
+    return {
+      year,
+      monthNumber,
+      monthName: MONTHS[monthNumber - 1],
+      deadline: defaultDeadlineFor(year, monthNumber)
+    };
+  }
+
+  function isVotingClosed(windowInfo = getVotingWindow()) {
+    return windowInfo.deadline.getTime() <= Date.now();
+  }
+
+  function getNominationTargetWindow() {
+    const windowInfo = getVotingWindow();
+    return isVotingClosed(windowInfo) ? nextVotingWindow(windowInfo) : windowInfo;
+  }
+
+  async function saveVotingWindow(year, monthNumber, deadline) {
+    const value = {
+      year: Number(year),
+      monthNumber: Number(monthNumber),
+      monthName: MONTHS[Number(monthNumber) - 1],
+      deadlineIso: deadline.toISOString()
+    };
+    await saveSetting("voting_window", value);
+    await saveSetting("countdown_deadline", { iso: value.deadlineIso });
+  }
+
+  function getDeadline() {
+    return getVotingWindow().deadline;
   }
 
   function tickCountdown() {

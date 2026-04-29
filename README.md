@@ -9,6 +9,7 @@
 - `config.js` — where you paste your Supabase URL and anon key.
 - `schema.sql` — creates the Supabase tables, view, constraints, and permissive prototype policies.
 - `seed.sql` — inserts Grade 6 students, teachers, previous winners, existing nominations, and countdown setting.
+- `supabase_patch_admin_edit_delete.sql` — run this only if you already created Supabase from an older schema and need delete/edit admin support.
 
 ## Fast local test
 
@@ -47,9 +48,33 @@ window.SCLS_SUPABASE_CONFIG = {
 - Changing from upvote to downvote updates the same reaction row. It does not stack duplicate votes.
 - Original nomination counts as one base upvote.
 - Keagan Wayne Appel has admin controls:
-  - change the countdown deadline;
+  - password gate: `31415`;
+  - set the active voting month/year and deadline;
   - add warning/context notes to students;
-  - record the four monthly winners.
+  - record or replace the four monthly winners;
+  - edit/delete recorded winners;
+  - edit/delete nominations, including the original nomination month/year;
+  - print a single winner certificate-data page with names, homerooms, vote totals, and accolade wording.
+
+## Existing Supabase project update
+
+If you already ran the first version of `schema.sql`, run this additional file once in Supabase SQL Editor:
+
+```sql
+-- paste and run the contents of supabase_patch_admin_edit_delete.sql
+```
+
+That patch adds delete permission/policies and updates the scoreboard view to include nomination month/year. New projects can just run the updated `schema.sql`.
+
+## Voting window behavior
+
+The Admin → Voting window controls the month shown on the home page, the countdown, and the month/year used when teachers submit new nominations while voting is open. If the deadline has passed, the home and nomination pages stop saying the old month is open. New nominations are saved against the next month.
+
+When the four winners are recorded for the active voting month, their active nominations are automatically closed so they disappear from the current nomination list. The month also advances to the next month with a default end-of-month deadline, which you can adjust in Admin → Voting window.
+
+## Existing carried nominations
+
+The carried-over nominations are seeded with a month value because the database requires one. If the exact nomination month was earlier than the seed value, change it in Admin → Edit nominations. New nominations automatically record the active voting window month/year, or the next month if the previous window is already closed.
 
 ## Important manual check
 
