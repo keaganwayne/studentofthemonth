@@ -2,9 +2,9 @@
 (() => {
   "use strict";
 
-  const ADMIN_NAME = "Keagan Wayne Appel";
   const LOCAL_KEY = "scls-sotm-state-v1";
   const TEACHER_KEY = "scls-sotm-current-teacher";
+  const ADMIN_CODE_KEY = "scls-sotm-admin-code";
   const MONTHS = [
     "January", "February", "March", "April", "May", "June",
     "July", "August", "September", "October", "November", "December"
@@ -14,30 +14,47 @@
   const seed = structuredClone(window.SCLS_SEED_DATA || {});
   const usingApi = Boolean(API_BASE);
 
-  async function apiGet(path) {
-    const res = await fetch(`${API_BASE}${path}`);
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`API GET failed ${res.status}: ${text}`);
+  async function apiRequest(method, path, data, opts = {}) {
+    const headers = {};
+    if (data !== undefined) headers["Content-Type"] = "application/json";
+    if (opts.admin) {
+      const code = getAdminCode();
+      if (!code) throw new Error("Admin code is required for this action.");
+      headers["X-School-Admin-Code"] = code;
     }
-    return await res.json();
-  }
 
-  async function apiPost(path, data) {
     const res = await fetch(`${API_BASE}${path}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(data)
+      method,
+      headers,
+      body: data === undefined ? undefined : JSON.stringify(data)
     });
 
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`API POST failed ${res.status}: ${text}`);
+      const error = new Error(`API ${method} failed ${res.status}: ${text}`);
+      error.status = res.status;
+      throw error;
     }
 
-    return await res.json();
+    if (res.status === 204) return null;
+    const text = await res.text();
+    return text ? JSON.parse(text) : null;
+  }
+
+  async function apiGet(path, opts) {
+    return await apiRequest("GET", path, undefined, opts);
+  }
+
+  async function apiPost(path, data, opts) {
+    return await apiRequest("POST", path, data, opts);
+  }
+
+  async function apiPatch(path, data, opts) {
+    return await apiRequest("PATCH", path, data, opts);
+  }
+
+  async function apiDelete(path, opts) {
+    return await apiRequest("DELETE", path, undefined, opts);
   }
 
   const state = {
@@ -53,7 +70,10 @@
     results: [],
     alerts: [],
     settings: [],
-    loadError: ""
+    loadError: "",
+    demoFallback: false,
+    demoFallbackMessage: "",
+    adminError: ""
   };
 
   const $ = (selector) => document.querySelector(selector);
@@ -70,7 +90,9 @@
     $("#brandHome").addEventListener("click", () => go("home"));
     $("#teacherPill").addEventListener("click", () => {
       localStorage.removeItem(TEACHER_KEY);
+      sessionStorage.removeItem(ADMIN_CODE_KEY);
       state.currentTeacher = "";
+      state.adminError = "";
       go("home");
       draw();
     });
@@ -108,23 +130,30 @@
 
   async function loadAll() {
     state.loadError = "";
+    state.demoFallback = false;
+    state.demoFallbackMessage = "";
 
     if (!usingApi) {
       const saved = localStorage.getItem(LOCAL_KEY);
       const data = saved ? JSON.parse(saved) : cloneSeed();
       Object.assign(state, data);
+      state.demoFallback = true;
+      state.demoFallbackMessage = "Running in local demo mode because no Pi API base is configured.";
       saveLocal();
       return;
     }
 
     try {
       const [
-        studentsResponse, teachersResponse, nominationsResponse, resultsResponse
+        studentsResponse, teachersResponse, nominationsResponse, resultsResponse, winnersResponse, settingsResponse, alertsResponse
       ] = await Promise.all([
         apiGet("/api/student-vote/students"),
         apiGet("/api/student-vote/teachers"),
         apiGet("/api/student-vote/nominations"),
-        apiGet("/api/student-vote/results")
+        apiGet("/api/student-vote/results"),
+        apiGet("/api/student-vote/winners"),
+        apiGet("/api/student-vote/settings"),
+        apiGet("/api/student-vote/alerts")
       ]);
 
       const nominations = Array.isArray(nominationsResponse.nominations) ? nominationsResponse.nominations : [];
@@ -134,12 +163,16 @@
       state.nominations = nominations.map(normalizeNomination);
       state.reasons = nominations.flatMap(normalizeReasons);
       state.reactions = nominations.flatMap(normalizeReactions);
-      state.winners = [];
-      state.alerts = [];
-      state.settings = [];
+      state.winners = Array.isArray(winnersResponse.winners) ? winnersResponse.winners : [];
+      state.alerts = Array.isArray(alertsResponse.alerts) ? alertsResponse.alerts : [];
+      state.settings = Array.isArray(settingsResponse.settings) ? settingsResponse.settings : [];
     } catch (error) {
       console.error(error);
-      state.loadError = "Could not load the Student of the Month data from the Pi API. Check the API URL, network access, and CORS settings, then refresh.";
+      const saved = localStorage.getItem(LOCAL_KEY);
+      const data = saved ? JSON.parse(saved) : cloneSeed();
+      Object.assign(state, data);
+      state.demoFallback = true;
+      state.demoFallbackMessage = "Pi API loading failed, so this browser is showing local demo data. Live changes will not be saved.";
     }
   }
 
@@ -211,21 +244,23 @@
       return;
     }
     if (!state.currentTeacher) {
-      app.innerHTML = loginView();
+      setAppContent(loginView());
       return;
     }
 
-    if (state.route === "vote") app.innerHTML = voteView();
-    else if (state.route === "hall") app.innerHTML = hallView();
-    else if (state.route === "admin") app.innerHTML = adminView();
-    else app.innerHTML = homeView();
+    if (state.route === "vote") setAppContent(voteView());
+    else if (state.route === "hall") setAppContent(hallView());
+    else if (state.route === "admin") setAppContent(adminView());
+    else setAppContent(homeView());
   }
 
   function renderShell() {
     const modeBadge = $("#modeBadge");
-    modeBadge.textContent = usingApi ? "Pi API live" : "Local demo";
+    modeBadge.textContent = state.demoFallback ? "Demo fallback" : usingApi ? "Pi API live" : "Local demo";
     modeBadge.className = `hidden sm:inline-flex text-[10px] uppercase tracking-widest rounded-full border px-2 py-1 ${
-      usingApi ? "border-emerald-400/30 text-emerald-300 bg-emerald-500/10" : "border-yellow-500/30 text-yellow-300 bg-yellow-500/10"
+      state.demoFallback
+        ? "border-red-400/30 text-red-200 bg-red-500/10"
+        : usingApi ? "border-emerald-400/30 text-emerald-300 bg-emerald-500/10" : "border-yellow-500/30 text-yellow-300 bg-yellow-500/10"
     }`;
 
     $("#teacherPill").textContent = state.currentTeacher || "Select teacher";
@@ -249,6 +284,20 @@
         ${escapeHtml(shortLabel(label))}
       </button>
     `).join("");
+  }
+
+  function setAppContent(html) {
+    app.innerHTML = `${demoFallbackNotice()}${html}`;
+  }
+
+  function demoFallbackNotice() {
+    if (!state.demoFallback) return "";
+    return `
+      <div class="mb-6 rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-red-100 flex items-start gap-2">
+        <span class="material-symbols-outlined text-base mt-0.5">cloud_off</span>
+        <span>${escapeHtml(state.demoFallbackMessage || "Local demo data is being shown.")}</span>
+      </div>
+    `;
   }
 
   function loadingView() {
@@ -483,8 +532,9 @@
 
   function adminView() {
     if (!isAdmin()) {
-      return emptyPanel("Admin access only.", `This panel is only visible to ${ADMIN_NAME}.`);
+      return emptyPanel("Admin access only.", "This panel is only visible to teachers marked as admins.");
     }
+    if (usingApi && !getAdminCode()) return adminCodeView();
 
     const votingWindow = getVotingWindow();
     const deadlineValue = toLocalDatetimeValue(votingWindow.deadline);
@@ -590,6 +640,29 @@
 
         <div class="lg:col-span-12">
           ${adminNominationsEditor(studentOptions)}
+        </div>
+      </section>
+    `;
+  }
+
+  function adminCodeView() {
+    return `
+      <section class="min-h-[65vh] grid place-items-center">
+        <div class="glass-panel rounded-2xl p-6 md:p-10 max-w-xl w-full relative overflow-hidden">
+          <div class="absolute -top-10 -left-10 w-40 h-40 bg-yellow-500/20 rounded-full blur-3xl"></div>
+          <div class="relative z-10 text-center mb-6">
+            <span class="material-symbols-outlined text-yellow-500 text-6xl" style="font-variation-settings: 'FILL' 1;">admin_panel_settings</span>
+            <h1 class="font-headline-md text-3xl text-white mt-3">Admin code required</h1>
+            <p class="text-on-surface-variant mt-2">Enter the school admin code to enable admin controls for this browser session.</p>
+            ${state.adminError ? `<p class="mt-4 rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-2 text-red-100 text-sm">${escapeHtml(state.adminError)}</p>` : ""}
+          </div>
+          <form id="adminCodeForm" class="relative z-10 flex flex-col gap-4">
+            <input id="adminCode" name="adminCode" type="password" inputmode="numeric" autocomplete="one-time-code" placeholder="Admin code" class="w-full bg-surface-container-high/70 border border-outline/30 rounded-lg py-4 px-4 text-on-surface font-body-base focus:outline-none focus:border-primary-container/60 focus:ring-1 focus:ring-primary-container/60" required />
+            <button class="glow-button bg-primary-container text-on-primary font-headline-md text-[20px] py-4 rounded-lg flex items-center justify-center gap-2" type="submit">
+              <span class="material-symbols-outlined">lock_open</span>
+              Enable admin controls
+            </button>
+          </form>
         </div>
       </section>
     `;
@@ -938,7 +1011,7 @@
                 <span class="badge rounded-full px-2 py-1 text-xs">${escapeHtml(cap(alert.severity))}</span>
               </div>
               <p class="text-on-surface-variant">${escapeHtml(alert.note)}</p>
-              <p class="text-xs text-on-surface-variant mt-2">Added by ${escapeHtml(alert.created_by || ADMIN_NAME)}</p>
+              <p class="text-xs text-on-surface-variant mt-2">Added by ${escapeHtml(alert.created_by || "Admin")}</p>
             </div>
             ${admin ? `<button data-deactivate-alert="${escapeAttr(alert.id)}" type="button" class="text-on-surface-variant hover:text-red-200"><span class="material-symbols-outlined">close</span></button>` : ""}
           </div>
@@ -1036,13 +1109,39 @@
   }
 
   async function handleSubmit(event) {
+    if (event.target.id === "adminCodeForm") {
+      event.preventDefault();
+      const data = new FormData(event.target);
+      const code = String(data.get("adminCode") || "").trim();
+      if (!code) {
+        state.adminError = "Enter the admin code to continue.";
+        draw();
+        return;
+      }
+
+      sessionStorage.setItem(ADMIN_CODE_KEY, code);
+      try {
+        await apiGet("/api/student-vote/admin-check", { admin: true });
+        state.adminError = "";
+        toast("Admin controls enabled for this browser session.", "success");
+        draw();
+      } catch (error) {
+        console.error(error);
+        sessionStorage.removeItem(ADMIN_CODE_KEY);
+        state.adminError = "Admin code was not accepted. Check the code and try again.";
+        draw();
+      }
+      return;
+    }
+
     if (event.target.id === "loginForm") {
       event.preventDefault();
       const teacher = $("#teacherSelect").value;
       if (!teacher) return toast("Select your teacher name first.", "warning");
       state.currentTeacher = teacher;
       localStorage.setItem(TEACHER_KEY, teacher);
-      go("home");
+      state.adminError = "";
+      go(currentTeacherRecord()?.is_admin && usingApi && !getAdminCode() ? "admin" : "home");
       draw();
       return;
     }
@@ -1056,16 +1155,16 @@
 
     if (event.target.id === "deadlineForm") {
       event.preventDefault();
-      if (usingApi) {
-        toast("Voting window settings need a matching Pi API route before they can be saved live.", "warning");
-        return;
-      }
       const data = new FormData(event.target);
       const year = Number(data.get("votingYear"));
       const monthNumber = Number(data.get("votingMonth"));
       const value = String(data.get("deadlineInput") || "");
       const deadline = value ? new Date(value) : defaultDeadlineFor(year, monthNumber);
-      await saveVotingWindow(year, monthNumber, deadline);
+      try {
+        await saveVotingWindow(year, monthNumber, deadline);
+      } catch {
+        return;
+      }
       toast(`${MONTHS[monthNumber - 1]} voting window saved.`, "success");
       draw();
       return;
@@ -1248,11 +1347,6 @@
   }
 
   async function addAlert(studentName, severity, note) {
-    if (usingApi) {
-      toast("Alert notes need a matching Pi API route before they can be saved live.", "warning");
-      return;
-    }
-
     const student = findStudentByName(studentName);
     note = note.trim();
     if (!student) return toast("Student name must match the Grade 6 list.", "warning");
@@ -1269,6 +1363,25 @@
       updated_at: new Date().toISOString()
     };
 
+    if (usingApi) {
+      try {
+        await apiPost("/api/student-vote/alerts", {
+          student_id: alert.student_id,
+          severity: alert.severity,
+          note: alert.note,
+          active: true,
+          created_by: state.currentTeacher
+        }, { admin: true });
+        await reloadIfLive();
+      } catch (error) {
+        handleAdminWriteError(error, "Alert note could not be saved.");
+        return;
+      }
+      toast(`Alert note added for ${student.full_name}.`, "success");
+      draw();
+      return;
+    }
+
     state.alerts.unshift(alert);
     saveLocal();
 
@@ -1278,7 +1391,17 @@
 
   async function deactivateAlert(alertId) {
     if (usingApi) {
-      toast("Alert notes need a matching Pi API route before they can be changed live.", "warning");
+      try {
+        await apiPatch(`/api/student-vote/alerts/${encodeURIComponent(alertId)}`, {
+          active: false
+        }, { admin: true });
+        await reloadIfLive();
+      } catch (error) {
+        handleAdminWriteError(error, "Alert note could not be changed.");
+        return;
+      }
+      toast("Alert note deactivated.", "success");
+      draw();
       return;
     }
     const alert = state.alerts.find(a => String(a.id) === String(alertId));
@@ -1290,6 +1413,21 @@
 
   async function saveSetting(key, value) {
     const row = { key, value, updated_by: state.currentTeacher, updated_at: new Date().toISOString() };
+    if (usingApi) {
+      try {
+        await apiPost("/api/student-vote/settings", {
+          key,
+          value,
+          updated_by: state.currentTeacher
+        }, { admin: true });
+        await reloadIfLive();
+      } catch (error) {
+        handleAdminWriteError(error, "Setting could not be saved.");
+        throw error;
+      }
+      return;
+    }
+
     const existing = state.settings.find(s => s.key === key);
     if (existing) Object.assign(existing, row);
     else state.settings.push(row);
@@ -1297,11 +1435,6 @@
   }
 
   async function recordWinners(formData) {
-    if (usingApi) {
-      toast("Winner recording needs a matching Pi API route before it can be saved live.", "warning");
-      return;
-    }
-
     const year = Number(formData.get("winnerYear"));
     const monthNumber = Number(formData.get("winnerMonth"));
     const monthName = MONTHS[monthNumber - 1];
@@ -1333,6 +1466,39 @@
     const shouldAdvanceWindow = Number(activeWindowBeforeSave.year) === year && Number(activeWindowBeforeSave.monthNumber) === monthNumber;
     const nextWindow = shouldAdvanceWindow ? nextVotingWindow(activeWindowBeforeSave) : null;
 
+    if (usingApi) {
+      try {
+        const existingWinners = state.winners.filter(w => Number(w.award_year) === year && Number(w.month_number) === monthNumber);
+        await Promise.all(existingWinners.map(w => apiDelete(`/api/student-vote/winners/${encodeURIComponent(w.id)}`, { admin: true })));
+        await Promise.all(rows.map(({ id, created_at, ...winner }) => apiPost("/api/student-vote/winners", winner, { admin: true })));
+
+        const winnerNominationIds = state.nominations
+          .filter(n => winnerStudentIds.some(id => String(id) === String(n.student_id)) && n.status === "active")
+          .map(n => n.id);
+        await Promise.all(winnerNominationIds.map(id => apiPatch(`/api/student-vote/nominations/${encodeURIComponent(id)}`, {
+          status: "closed"
+        }, { admin: true })));
+
+        if (shouldAdvanceWindow) {
+          await saveVotingWindow(nextWindow.year, nextWindow.monthNumber, nextWindow.deadline);
+        } else {
+          await reloadIfLive();
+        }
+      } catch (error) {
+        handleAdminWriteError(error, "Winners could not be recorded.");
+        return;
+      }
+
+      sessionStorage.setItem("scls-sotm-print-year", String(year));
+      sessionStorage.setItem("scls-sotm-print-month", String(monthNumber));
+      const advanceNote = shouldAdvanceWindow ? ` Voting window moved to ${nextWindow.monthName} ${nextWindow.year}.` : "";
+      toast(`${monthName} winners recorded and removed from the active nomination list.${advanceNote}`, "success");
+      state.route = "admin";
+      location.hash = "admin";
+      draw();
+      return;
+    }
+
     state.winners = state.winners.filter(w => !(Number(w.award_year) === year && Number(w.month_number) === monthNumber));
     state.winners.push(...rows);
     state.nominations.forEach(n => {
@@ -1361,11 +1527,6 @@
   }
 
   async function updateWinner(formData) {
-    if (usingApi) {
-      toast("Winner editing needs a matching Pi API route before it can be saved live.", "warning");
-      return;
-    }
-
     const winnerId = String(formData.get("winnerId") || "");
     const year = Number(formData.get("editWinnerYear"));
     const monthNumber = Number(formData.get("editWinnerMonth"));
@@ -1379,6 +1540,20 @@
 
     const patch = { award_year: year, month_number: monthNumber, month_name: monthName, student_id: student.id, slot, recorded_by: state.currentTeacher };
 
+    if (usingApi) {
+      try {
+        await apiDelete(`/api/student-vote/winners/${encodeURIComponent(winnerId)}`, { admin: true });
+        await apiPost("/api/student-vote/winners", patch, { admin: true });
+        await reloadIfLive();
+      } catch (error) {
+        handleAdminWriteError(error, "Winner could not be updated.");
+        return;
+      }
+      toast("Winner updated.", "success");
+      draw();
+      return;
+    }
+
     const row = state.winners.find(w => String(w.id) === winnerId);
     if (row) Object.assign(row, patch);
     saveLocal();
@@ -1389,7 +1564,15 @@
 
   async function deleteWinner(winnerId) {
     if (usingApi) {
-      toast("Winner deleting needs a matching Pi API route before it can be saved live.", "warning");
+      try {
+        await apiDelete(`/api/student-vote/winners/${encodeURIComponent(winnerId)}`, { admin: true });
+        await reloadIfLive();
+      } catch (error) {
+        handleAdminWriteError(error, "Winner could not be deleted.");
+        return;
+      }
+      toast("Winner deleted.", "success");
+      draw();
       return;
     }
     state.winners = state.winners.filter(w => String(w.id) !== String(winnerId));
@@ -1399,11 +1582,6 @@
   }
 
   async function updateNomination(formData) {
-    if (usingApi) {
-      toast("Nomination editing needs a matching Pi API route before it can be saved live.", "warning");
-      return;
-    }
-
     const nominationId = String(formData.get("nominationId") || "");
     const student = findStudentByName(String(formData.get("editNominationStudent") || ""));
     const originalTeacher = String(formData.get("editNominationTeacher") || "").trim();
@@ -1429,6 +1607,19 @@
       status
     };
 
+    if (usingApi) {
+      try {
+        await apiPatch(`/api/student-vote/nominations/${encodeURIComponent(nominationId)}`, patch, { admin: true });
+        await reloadIfLive();
+      } catch (error) {
+        handleAdminWriteError(error, "Nomination could not be updated.");
+        return;
+      }
+      toast("Nomination updated.", "success");
+      draw();
+      return;
+    }
+
     const row = state.nominations.find(n => String(n.id) === nominationId);
     if (row) Object.assign(row, patch, { updated_at: new Date().toISOString() });
     saveLocal();
@@ -1439,7 +1630,15 @@
 
   async function deleteNomination(nominationId) {
     if (usingApi) {
-      toast("Nomination deleting needs a matching Pi API route before it can be saved live.", "warning");
+      try {
+        await apiDelete(`/api/student-vote/nominations/${encodeURIComponent(nominationId)}`, { admin: true });
+        await reloadIfLive();
+      } catch (error) {
+        handleAdminWriteError(error, "Nomination could not be deleted.");
+        return;
+      }
+      toast("Nomination deleted.", "success");
+      draw();
       return;
     }
     state.nominations = state.nominations.filter(n => String(n.id) !== String(nominationId));
@@ -1608,14 +1807,35 @@
   }
 
   function isAdmin() {
-    return teacherMatches(state.currentTeacher, ADMIN_NAME) || state.teachers.some(t => teacherMatches(t.name, state.currentTeacher) && t.is_admin);
+    return currentTeacherRecord()?.is_admin === true;
+  }
+
+  function currentTeacherRecord() {
+    return state.teachers.find(t => teacherMatches(t.name, state.currentTeacher));
+  }
+
+  function getAdminCode() {
+    return sessionStorage.getItem(ADMIN_CODE_KEY) || "";
+  }
+
+  function handleAdminWriteError(error, fallbackMessage) {
+    if (error?.adminHandled) return;
+    if (error) error.adminHandled = true;
+    console.error(error);
+    if (error?.status === 401 || error?.status === 403) {
+      sessionStorage.removeItem(ADMIN_CODE_KEY);
+      state.adminError = "Admin code was missing or not accepted. Enter it again to continue.";
+      go("admin");
+      draw();
+      return;
+    }
+    toast(fallbackMessage, "warning");
   }
 
   function teacherMatches(a, b) {
     const ak = teacherKey(a);
     const bk = teacherKey(b);
     if (ak === bk) return true;
-    if (ak.includes("keagan") && ak.includes("appel") && bk.includes("keagan") && bk.includes("appel")) return true;
     return false;
   }
 
