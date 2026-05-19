@@ -3,8 +3,6 @@
   "use strict";
 
   const ADMIN_NAME = "Keagan Wayne Appel";
-  const ADMIN_PASSWORD = "31415";
-  const ADMIN_AUTH_KEY = "scls-sotm-admin-unlocked";
   const LOCAL_KEY = "scls-sotm-state-v1";
   const TEACHER_KEY = "scls-sotm-current-teacher";
   const MONTHS = [
@@ -12,30 +10,50 @@
     "July", "August", "September", "October", "November", "December"
   ];
 
-  const supabaseConfig = window.SCLS_SUPABASE_CONFIG || {};
+  const API_BASE = (window.SCLS_API_CONFIG?.apiBase || "").replace(/\/$/, "");
   const seed = structuredClone(window.SCLS_SEED_DATA || {});
-  let usingSupabase = Boolean(
-    window.supabase &&
-    supabaseConfig.url &&
-    supabaseConfig.anonKey &&
-    !supabaseConfig.url.includes("YOUR_") &&
-    !supabaseConfig.anonKey.includes("YOUR_")
-  );
-  const sb = usingSupabase ? window.supabase.createClient(supabaseConfig.url, supabaseConfig.anonKey) : null;
+  const usingApi = Boolean(API_BASE);
+
+  async function apiGet(path) {
+    const res = await fetch(`${API_BASE}${path}`);
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`API GET failed ${res.status}: ${text}`);
+    }
+    return await res.json();
+  }
+
+  async function apiPost(path, data) {
+    const res = await fetch(`${API_BASE}${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(data)
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`API POST failed ${res.status}: ${text}`);
+    }
+
+    return await res.json();
+  }
 
   const state = {
     ready: false,
     route: "home",
     currentTeacher: localStorage.getItem(TEACHER_KEY) || "",
-    adminUnlocked: sessionStorage.getItem(ADMIN_AUTH_KEY) === "yes",
     students: [],
     teachers: [],
     winners: [],
     nominations: [],
     reasons: [],
     reactions: [],
+    results: [],
     alerts: [],
-    settings: []
+    settings: [],
+    loadError: ""
   };
 
   const $ = (selector) => document.querySelector(selector);
@@ -89,7 +107,9 @@
   }
 
   async function loadAll() {
-    if (!usingSupabase) {
+    state.loadError = "";
+
+    if (!usingApi) {
       const saved = localStorage.getItem(LOCAL_KEY);
       const data = saved ? JSON.parse(saved) : cloneSeed();
       Object.assign(state, data);
@@ -99,41 +119,32 @@
 
     try {
       const [
-        students, teachers, winners, nominations, reasons, reactions, alerts, settings
+        studentsResponse, teachersResponse, nominationsResponse, resultsResponse
       ] = await Promise.all([
-        sb.from("students").select("*").order("full_name", { ascending: true }),
-        sb.from("teachers").select("*").order("name", { ascending: true }),
-        sb.from("winners").select("*").order("award_year", { ascending: true }).order("month_number", { ascending: true }),
-        sb.from("nominations").select("*").order("created_at", { ascending: true }),
-        sb.from("nomination_reasons").select("*").order("created_at", { ascending: true }),
-        sb.from("nomination_reactions").select("*").order("updated_at", { ascending: false }),
-        sb.from("student_alerts").select("*").order("created_at", { ascending: false }),
-        sb.from("settings").select("*")
+        apiGet("/api/student-vote/students"),
+        apiGet("/api/student-vote/teachers"),
+        apiGet("/api/student-vote/nominations"),
+        apiGet("/api/student-vote/results")
       ]);
 
-      const responses = { students, teachers, winners, nominations, reasons, reactions, alerts, settings };
-      const failed = Object.entries(responses).find(([, result]) => result.error);
-      if (failed) throw failed[1].error;
-
-      state.students = students.data || [];
-      state.teachers = teachers.data || [];
-      state.winners = winners.data || [];
-      state.nominations = nominations.data || [];
-      state.reasons = reasons.data || [];
-      state.reactions = reactions.data || [];
-      state.alerts = alerts.data || [];
-      state.settings = settings.data || [];
+      const nominations = Array.isArray(nominationsResponse.nominations) ? nominationsResponse.nominations : [];
+      state.students = Array.isArray(studentsResponse.students) ? studentsResponse.students : [];
+      state.teachers = Array.isArray(teachersResponse.teachers) ? teachersResponse.teachers : [];
+      state.results = Array.isArray(resultsResponse.results) ? resultsResponse.results : [];
+      state.nominations = nominations.map(normalizeNomination);
+      state.reasons = nominations.flatMap(normalizeReasons);
+      state.reactions = nominations.flatMap(normalizeReactions);
+      state.winners = [];
+      state.alerts = [];
+      state.settings = [];
     } catch (error) {
       console.error(error);
-      toast("Supabase load failed. Falling back to local demo data for this browser.", "warning");
-      usingSupabase = false;
-      Object.assign(state, cloneSeed());
-      saveLocal();
+      state.loadError = "Could not load the Student of the Month data from the Pi API. Check the API URL, network access, and CORS settings, then refresh.";
     }
   }
 
   function saveLocal() {
-    if (usingSupabase) return;
+    if (usingApi) return;
     const serializable = {
       students: state.students,
       teachers: state.teachers,
@@ -141,16 +152,62 @@
       nominations: state.nominations,
       reasons: state.reasons,
       reactions: state.reactions,
+      results: state.results,
       alerts: state.alerts,
       settings: state.settings
     };
     localStorage.setItem(LOCAL_KEY, JSON.stringify(serializable));
   }
 
+  function normalizeNomination(row) {
+    const firstReason = Array.isArray(row.reasons) ? row.reasons.find(r => r?.reason) : null;
+    const monthNumber = Number(row.first_month_number || row.month_number || row.monthNumber) || (new Date().getMonth() + 1);
+    return {
+      ...row,
+      id: row.id || row.nomination_id,
+      student_id: row.student_id,
+      original_teacher: row.original_teacher || row.teacher_name || row.teacher || "",
+      original_reason: row.original_reason || row.reason || firstReason?.reason || "",
+      first_month_name: row.first_month_name || row.month_name || row.monthName || MONTHS[monthNumber - 1],
+      first_month_number: monthNumber,
+      first_year: Number(row.first_year || row.year) || new Date().getFullYear(),
+      status: row.status || "active"
+    };
+  }
+
+  function normalizeReasons(row) {
+    const nominationId = row.id || row.nomination_id;
+    if (!Array.isArray(row.reasons)) return [];
+    return row.reasons.map((reason, index) => ({
+      id: reason.id || `reason-${nominationId}-${index}`,
+      nomination_id: nominationId,
+      teacher_name: reason.teacher_name || row.original_teacher || "",
+      reason: reason.reason || "",
+      created_at: reason.created_at || row.created_at || new Date().toISOString()
+    }));
+  }
+
+  function normalizeReactions(row) {
+    const nominationId = row.id || row.nomination_id;
+    if (!Array.isArray(row.reactions)) return [];
+    return row.reactions.map((reaction, index) => ({
+      id: reaction.id || `rx-${nominationId}-${teacherKey(reaction.teacher_name || index)}`,
+      nomination_id: nominationId,
+      teacher_name: reaction.teacher_name || "",
+      reaction: Number(reaction.reaction),
+      created_at: reaction.created_at || reaction.updated_at || row.created_at || new Date().toISOString(),
+      updated_at: reaction.updated_at || reaction.created_at || row.created_at || new Date().toISOString()
+    }));
+  }
+
   function draw() {
     renderShell();
     if (!state.ready) {
       app.innerHTML = loadingView();
+      return;
+    }
+    if (state.loadError) {
+      app.innerHTML = errorView(state.loadError);
       return;
     }
     if (!state.currentTeacher) {
@@ -166,9 +223,9 @@
 
   function renderShell() {
     const modeBadge = $("#modeBadge");
-    modeBadge.textContent = usingSupabase ? "Supabase live" : "Local demo";
+    modeBadge.textContent = usingApi ? "Pi API live" : "Local demo";
     modeBadge.className = `hidden sm:inline-flex text-[10px] uppercase tracking-widest rounded-full border px-2 py-1 ${
-      usingSupabase ? "border-emerald-400/30 text-emerald-300 bg-emerald-500/10" : "border-yellow-500/30 text-yellow-300 bg-yellow-500/10"
+      usingApi ? "border-emerald-400/30 text-emerald-300 bg-emerald-500/10" : "border-yellow-500/30 text-yellow-300 bg-yellow-500/10"
     }`;
 
     $("#teacherPill").textContent = state.currentTeacher || "Select teacher";
@@ -200,6 +257,22 @@
         <div class="glass-panel rounded-2xl p-8 text-center">
           <span class="material-symbols-outlined text-yellow-500 text-5xl animate-pulse" style="font-variation-settings: 'FILL' 1;">star</span>
           <p class="mt-4 text-on-surface-variant">Loading awards system...</p>
+        </div>
+      </section>
+    `;
+  }
+
+  function errorView(message) {
+    return `
+      <section class="min-h-[60vh] flex items-center justify-center">
+        <div class="glass-panel rounded-2xl p-8 max-w-2xl w-full text-center border border-red-400/30 bg-red-500/10">
+          <span class="material-symbols-outlined text-red-200 text-5xl">error</span>
+          <h1 class="font-headline-md text-3xl text-white mt-4">API connection failed</h1>
+          <p class="mt-3 text-red-100">${escapeHtml(message)}</p>
+          <p class="mt-4 text-sm text-on-surface-variant">${escapeHtml(API_BASE || "No API base configured")}</p>
+          <button class="mt-6 glow-button bg-primary-container text-on-primary px-5 py-3 rounded-full font-label-sm text-label-sm uppercase" type="button" onclick="location.reload()">
+            Retry
+          </button>
         </div>
       </section>
     `;
@@ -412,7 +485,6 @@
     if (!isAdmin()) {
       return emptyPanel("Admin access only.", `This panel is only visible to ${ADMIN_NAME}.`);
     }
-    if (!state.adminUnlocked) return adminPasswordView();
 
     const votingWindow = getVotingWindow();
     const deadlineValue = toLocalDatetimeValue(votingWindow.deadline);
@@ -518,28 +590,6 @@
 
         <div class="lg:col-span-12">
           ${adminNominationsEditor(studentOptions)}
-        </div>
-      </section>
-    `;
-  }
-
-  function adminPasswordView() {
-    return `
-      <section class="min-h-[65vh] grid place-items-center">
-        <div class="glass-panel rounded-2xl p-6 md:p-10 max-w-xl w-full relative overflow-hidden">
-          <div class="absolute -top-10 -left-10 w-40 h-40 bg-yellow-500/20 rounded-full blur-3xl"></div>
-          <div class="relative z-10 text-center mb-6">
-            <span class="material-symbols-outlined text-yellow-500 text-6xl" style="font-variation-settings: 'FILL' 1;">admin_panel_settings</span>
-            <h1 class="font-headline-md text-3xl text-white mt-3">Admin password</h1>
-            <p class="text-on-surface-variant mt-2">Enter the admin password to open the control panel.</p>
-          </div>
-          <form id="adminUnlockForm" class="relative z-10 flex flex-col gap-4">
-            <input id="adminPassword" name="adminPassword" type="password" inputmode="numeric" autocomplete="current-password" placeholder="Password" class="w-full bg-surface-container-high/70 border border-outline/30 rounded-lg py-4 px-4 text-on-surface font-body-base focus:outline-none focus:border-primary-container/60 focus:ring-1 focus:ring-primary-container/60" />
-            <button class="glow-button bg-primary-container text-on-primary font-headline-md text-[20px] py-4 rounded-lg flex items-center justify-center gap-2" type="submit">
-              <span class="material-symbols-outlined">lock_open</span>
-              Unlock admin
-            </button>
-          </form>
         </div>
       </section>
     `;
@@ -986,18 +1036,6 @@
   }
 
   async function handleSubmit(event) {
-    if (event.target.id === "adminUnlockForm") {
-      event.preventDefault();
-      const data = new FormData(event.target);
-      const password = String(data.get("adminPassword") || "").trim();
-      if (password !== ADMIN_PASSWORD) return toast("Incorrect admin password.", "warning");
-      state.adminUnlocked = true;
-      sessionStorage.setItem(ADMIN_AUTH_KEY, "yes");
-      toast("Admin unlocked.", "success");
-      draw();
-      return;
-    }
-
     if (event.target.id === "loginForm") {
       event.preventDefault();
       const teacher = $("#teacherSelect").value;
@@ -1018,6 +1056,10 @@
 
     if (event.target.id === "deadlineForm") {
       event.preventDefault();
+      if (usingApi) {
+        toast("Voting window settings need a matching Pi API route before they can be saved live.", "warning");
+        return;
+      }
       const data = new FormData(event.target);
       const year = Number(data.get("votingYear"));
       const monthNumber = Number(data.get("votingMonth"));
@@ -1102,22 +1144,28 @@
       status: won ? "closed" : "active"
     };
 
-    if (usingSupabase) {
-      const { data, error } = await sb.from("nominations").insert({
-        student_id: nomination.student_id,
-        original_teacher: nomination.original_teacher,
-        original_reason: nomination.original_reason,
-        first_month_name: nomination.first_month_name,
-        first_month_number: nomination.first_month_number,
-        first_year: nomination.first_year,
-        status: nomination.status
-      }).select().single();
-      if (error) return toast(error.message, "warning");
-      nomination.id = data.id;
-    } else {
-      state.nominations.push(nomination);
+    if (usingApi) {
+      try {
+        await apiPost("/api/student-vote/nominate", {
+          student_id: student.id,
+          teacher_name: state.currentTeacher,
+          reason,
+          month_name: targetWindow.monthName,
+          month_number: targetWindow.monthNumber,
+          year: targetWindow.year
+        });
+        toast(`${student.full_name} has been nominated for ${nomination.first_month_name} ${nomination.first_year}.`, won ? "warning" : "success");
+        go("home");
+        await reloadIfLive();
+        draw();
+      } catch (error) {
+        console.error(error);
+        toast("Nomination could not be saved to the Pi API.", "warning");
+      }
+      return;
     }
 
+    state.nominations.push(nomination);
     await addReason(nomination.id, state.currentTeacher, reason, { silent: true });
 
     toast(`${student.full_name} has been nominated for ${nomination.first_month_name} ${nomination.first_year}.${won ? " This student has already won, so the nomination is stored but not shown in the active list." : ""}`, won ? "warning" : "success");
@@ -1136,21 +1184,19 @@
 
     const existing = state.reactions.find(r => String(r.nomination_id) === String(nominationId) && teacherMatches(r.teacher_name, state.currentTeacher));
 
-    if (usingSupabase) {
-      if (existing) {
-        const { error } = await sb.from("nomination_reactions")
-          .update({ reaction, updated_at: new Date().toISOString() })
-          .eq("id", existing.id);
-        if (error) return toast(error.message, "warning");
-      } else {
-        const { error } = await sb.from("nomination_reactions").insert({
+    if (usingApi) {
+      try {
+        await apiPost("/api/student-vote/react", {
           nomination_id: nominationId,
           teacher_name: state.currentTeacher,
           reaction
         });
-        if (error) return toast(error.message, "warning");
+        await reloadIfLive();
+      } catch (error) {
+        console.error(error);
+        toast("Reaction could not be saved to the Pi API.", "warning");
+        return;
       }
-      await reloadIfLive();
     } else {
       if (existing) {
         existing.reaction = reaction;
@@ -1181,13 +1227,19 @@
       created_at: new Date().toISOString()
     };
 
-    if (usingSupabase) {
-      const { error } = await sb.from("nomination_reasons").insert({
-        nomination_id: nominationId,
-        teacher_name: teacherName,
-        reason: entry.reason
-      });
-      if (error) return toast(error.message, "warning");
+    if (usingApi) {
+      try {
+        await apiPost("/api/student-vote/reason", {
+          nomination_id: nominationId,
+          teacher_name: teacherName,
+          reason: entry.reason
+        });
+        await reloadIfLive();
+      } catch (error) {
+        console.error(error);
+        toast("Reason could not be saved to the Pi API.", "warning");
+        return;
+      }
     } else {
       state.reasons.push(entry);
       saveLocal();
@@ -1196,6 +1248,11 @@
   }
 
   async function addAlert(studentName, severity, note) {
+    if (usingApi) {
+      toast("Alert notes need a matching Pi API route before they can be saved live.", "warning");
+      return;
+    }
+
     const student = findStudentByName(studentName);
     note = note.trim();
     if (!student) return toast("Student name must match the Grade 6 list.", "warning");
@@ -1212,54 +1269,39 @@
       updated_at: new Date().toISOString()
     };
 
-    if (usingSupabase) {
-      const { error } = await sb.from("student_alerts").insert({
-        student_id: alert.student_id,
-        severity: alert.severity,
-        note: alert.note,
-        active: true,
-        created_by: state.currentTeacher
-      });
-      if (error) return toast(error.message, "warning");
-      await reloadIfLive();
-    } else {
-      state.alerts.unshift(alert);
-      saveLocal();
-    }
+    state.alerts.unshift(alert);
+    saveLocal();
 
     toast(`Alert note added for ${student.full_name}.`, "success");
     draw();
   }
 
   async function deactivateAlert(alertId) {
-    if (usingSupabase) {
-      const { error } = await sb.from("student_alerts").update({ active: false, updated_at: new Date().toISOString() }).eq("id", alertId);
-      if (error) return toast(error.message, "warning");
-      await reloadIfLive();
-    } else {
-      const alert = state.alerts.find(a => String(a.id) === String(alertId));
-      if (alert) alert.active = false;
-      saveLocal();
+    if (usingApi) {
+      toast("Alert notes need a matching Pi API route before they can be changed live.", "warning");
+      return;
     }
+    const alert = state.alerts.find(a => String(a.id) === String(alertId));
+    if (alert) alert.active = false;
+    saveLocal();
     toast("Alert note deactivated.", "success");
     draw();
   }
 
   async function saveSetting(key, value) {
     const row = { key, value, updated_by: state.currentTeacher, updated_at: new Date().toISOString() };
-    if (usingSupabase) {
-      const { error } = await sb.from("settings").upsert(row, { onConflict: "key" });
-      if (error) return toast(error.message, "warning");
-      await reloadIfLive();
-    } else {
-      const existing = state.settings.find(s => s.key === key);
-      if (existing) Object.assign(existing, row);
-      else state.settings.push(row);
-      saveLocal();
-    }
+    const existing = state.settings.find(s => s.key === key);
+    if (existing) Object.assign(existing, row);
+    else state.settings.push(row);
+    saveLocal();
   }
 
   async function recordWinners(formData) {
+    if (usingApi) {
+      toast("Winner recording needs a matching Pi API route before it can be saved live.", "warning");
+      return;
+    }
+
     const year = Number(formData.get("winnerYear"));
     const monthNumber = Number(formData.get("winnerMonth"));
     const monthName = MONTHS[monthNumber - 1];
@@ -1291,37 +1333,23 @@
     const shouldAdvanceWindow = Number(activeWindowBeforeSave.year) === year && Number(activeWindowBeforeSave.monthNumber) === monthNumber;
     const nextWindow = shouldAdvanceWindow ? nextVotingWindow(activeWindowBeforeSave) : null;
 
-    if (usingSupabase) {
-      const del = await sb.from("winners").delete().eq("award_year", year).eq("month_number", monthNumber);
-      if (del.error) return toast(del.error.message, "warning");
-      const { error } = await sb.from("winners").insert(rows.map(({ id, created_at, ...r }) => r));
-      if (error) return toast(error.message, "warning");
-      const close = await sb.from("nominations").update({ status: "closed", updated_at: new Date().toISOString() }).in("student_id", winnerStudentIds).eq("status", "active");
-      if (close.error) return toast(close.error.message, "warning");
-      if (shouldAdvanceWindow) {
-        await saveVotingWindow(nextWindow.year, nextWindow.monthNumber, nextWindow.deadline);
-      } else {
-        await reloadIfLive();
-      }
-    } else {
-      state.winners = state.winners.filter(w => !(Number(w.award_year) === year && Number(w.month_number) === monthNumber));
-      state.winners.push(...rows);
-      state.nominations.forEach(n => {
-        if (winnerStudentIds.some(id => String(id) === String(n.student_id)) && n.status === "active") n.status = "closed";
-      });
-      if (shouldAdvanceWindow) {
-        const value = {
-          year: nextWindow.year,
-          monthNumber: nextWindow.monthNumber,
-          monthName: nextWindow.monthName,
-          deadlineIso: nextWindow.deadline.toISOString()
-        };
-        const existing = state.settings.find(s => s.key === "voting_window");
-        if (existing) Object.assign(existing, { value, updated_by: state.currentTeacher, updated_at: new Date().toISOString() });
-        else state.settings.push({ key: "voting_window", value, updated_by: state.currentTeacher, updated_at: new Date().toISOString() });
-      }
-      saveLocal();
+    state.winners = state.winners.filter(w => !(Number(w.award_year) === year && Number(w.month_number) === monthNumber));
+    state.winners.push(...rows);
+    state.nominations.forEach(n => {
+      if (winnerStudentIds.some(id => String(id) === String(n.student_id)) && n.status === "active") n.status = "closed";
+    });
+    if (shouldAdvanceWindow) {
+      const value = {
+        year: nextWindow.year,
+        monthNumber: nextWindow.monthNumber,
+        monthName: nextWindow.monthName,
+        deadlineIso: nextWindow.deadline.toISOString()
+      };
+      const existing = state.settings.find(s => s.key === "voting_window");
+      if (existing) Object.assign(existing, { value, updated_by: state.currentTeacher, updated_at: new Date().toISOString() });
+      else state.settings.push({ key: "voting_window", value, updated_by: state.currentTeacher, updated_at: new Date().toISOString() });
     }
+    saveLocal();
 
     sessionStorage.setItem("scls-sotm-print-year", String(year));
     sessionStorage.setItem("scls-sotm-print-month", String(monthNumber));
@@ -1333,6 +1361,11 @@
   }
 
   async function updateWinner(formData) {
+    if (usingApi) {
+      toast("Winner editing needs a matching Pi API route before it can be saved live.", "warning");
+      return;
+    }
+
     const winnerId = String(formData.get("winnerId") || "");
     const year = Number(formData.get("editWinnerYear"));
     const monthNumber = Number(formData.get("editWinnerMonth"));
@@ -1346,34 +1379,31 @@
 
     const patch = { award_year: year, month_number: monthNumber, month_name: monthName, student_id: student.id, slot, recorded_by: state.currentTeacher };
 
-    if (usingSupabase) {
-      const { error } = await sb.from("winners").update(patch).eq("id", winnerId);
-      if (error) return toast(error.message, "warning");
-      await reloadIfLive();
-    } else {
-      const row = state.winners.find(w => String(w.id) === winnerId);
-      if (row) Object.assign(row, patch);
-      saveLocal();
-    }
+    const row = state.winners.find(w => String(w.id) === winnerId);
+    if (row) Object.assign(row, patch);
+    saveLocal();
 
     toast("Winner updated.", "success");
     draw();
   }
 
   async function deleteWinner(winnerId) {
-    if (usingSupabase) {
-      const { error } = await sb.from("winners").delete().eq("id", winnerId);
-      if (error) return toast(error.message, "warning");
-      await reloadIfLive();
-    } else {
-      state.winners = state.winners.filter(w => String(w.id) !== String(winnerId));
-      saveLocal();
+    if (usingApi) {
+      toast("Winner deleting needs a matching Pi API route before it can be saved live.", "warning");
+      return;
     }
+    state.winners = state.winners.filter(w => String(w.id) !== String(winnerId));
+    saveLocal();
     toast("Winner deleted.", "success");
     draw();
   }
 
   async function updateNomination(formData) {
+    if (usingApi) {
+      toast("Nomination editing needs a matching Pi API route before it can be saved live.", "warning");
+      return;
+    }
+
     const nominationId = String(formData.get("nominationId") || "");
     const student = findStudentByName(String(formData.get("editNominationStudent") || ""));
     const originalTeacher = String(formData.get("editNominationTeacher") || "").trim();
@@ -1399,37 +1429,29 @@
       status
     };
 
-    if (usingSupabase) {
-      const { error } = await sb.from("nominations").update(patch).eq("id", nominationId);
-      if (error) return toast(error.message, "warning");
-      await reloadIfLive();
-    } else {
-      const row = state.nominations.find(n => String(n.id) === nominationId);
-      if (row) Object.assign(row, patch, { updated_at: new Date().toISOString() });
-      saveLocal();
-    }
+    const row = state.nominations.find(n => String(n.id) === nominationId);
+    if (row) Object.assign(row, patch, { updated_at: new Date().toISOString() });
+    saveLocal();
 
     toast("Nomination updated.", "success");
     draw();
   }
 
   async function deleteNomination(nominationId) {
-    if (usingSupabase) {
-      const { error } = await sb.from("nominations").delete().eq("id", nominationId);
-      if (error) return toast(error.message, "warning");
-      await reloadIfLive();
-    } else {
-      state.nominations = state.nominations.filter(n => String(n.id) !== String(nominationId));
-      state.reasons = state.reasons.filter(r => String(r.nomination_id) !== String(nominationId));
-      state.reactions = state.reactions.filter(r => String(r.nomination_id) !== String(nominationId));
-      saveLocal();
+    if (usingApi) {
+      toast("Nomination deleting needs a matching Pi API route before it can be saved live.", "warning");
+      return;
     }
+    state.nominations = state.nominations.filter(n => String(n.id) !== String(nominationId));
+    state.reasons = state.reasons.filter(r => String(r.nomination_id) !== String(nominationId));
+    state.reactions = state.reactions.filter(r => String(r.nomination_id) !== String(nominationId));
+    saveLocal();
     toast("Nomination deleted.", "success");
     draw();
   }
 
   async function reloadIfLive() {
-    if (!usingSupabase) return;
+    if (!usingApi) return;
     await loadAll();
   }
 
