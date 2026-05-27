@@ -780,9 +780,9 @@
   }
 
   function winnerCertificateCard(winner) {
-    const nomination = nominationForWinner(winner);
+    const student = studentById(winner.student_id);
     if (!student) return "";
-    const nomination = nominationForStudentAny(student.id);
+    const nomination = nominationForWinner(winner);
     const stats = nomination ? nominationStats(nomination.id) : null;
     const allReasons = nomination ? state.reasons.filter(r => String(r.nomination_id) === String(nomination.id)) : [];
     const mainReason = nomination?.original_reason || "No nomination accolade found for this student.";
@@ -818,41 +818,41 @@
     `;
   }
 
-function nominationForWinner(winner) {
-  const winnerValue = Number(winner.award_year || 0) * 100 + Number(winner.month_number || 0);
+  function nominationForWinner(winner) {
+    const winnerValue = Number(winner.award_year || 0) * 100 + Number(winner.month_number || 0);
 
-  const nominations = [...state.nominations]
-    .filter(n => String(n.student_id) === String(winner.student_id))
-    .sort((a, b) => {
-      const av = Number(a.first_year || 0) * 100 + Number(a.first_month_number || 0);
-      const bv = Number(b.first_year || 0) * 100 + Number(b.first_month_number || 0);
-      return bv - av;
+    const nominations = [...state.nominations]
+      .filter(n => String(n.student_id) === String(winner.student_id))
+      .sort((a, b) => {
+        const av = Number(a.first_year || 0) * 100 + Number(a.first_month_number || 0);
+        const bv = Number(b.first_year || 0) * 100 + Number(b.first_month_number || 0);
+        return bv - av;
+      });
+
+    const exact = nominations.find(n =>
+      Number(n.first_year) === Number(winner.award_year) &&
+      Number(n.first_month_number) === Number(winner.month_number)
+    );
+    if (exact) return exact;
+
+    const beforeOrSame = nominations.find(n => {
+      const nv = Number(n.first_year || 0) * 100 + Number(n.first_month_number || 0);
+      return nv <= winnerValue;
     });
+    if (beforeOrSame) return beforeOrSame;
 
-  const exact = nominations.find(n =>
-    Number(n.first_year) === Number(winner.award_year) &&
-    Number(n.first_month_number) === Number(winner.month_number)
-  );
-  if (exact) return exact;
+    return nominations[0] || null;
+  }
 
-  const beforeOrSame = nominations.find(n => {
-    const nv = Number(n.first_year || 0) * 100 + Number(n.first_month_number || 0);
-    return nv <= winnerValue;
-  });
-  if (beforeOrSame) return beforeOrSame;
-
-  return nominations[0] || null;
-}
-
-function nominationForStudentAny(studentId) {
-  return [...state.nominations]
-    .filter(n => String(n.student_id) === String(studentId))
-    .sort((a, b) => {
-      const av = Number(a.first_year || 0) * 100 + Number(a.first_month_number || 0);
-      const bv = Number(b.first_year || 0) * 100 + Number(b.first_month_number || 0);
-      return bv - av;
-    })[0];
-}
+  function nominationForStudentAny(studentId) {
+    return [...state.nominations]
+      .filter(n => String(n.student_id) === String(studentId))
+      .sort((a, b) => {
+        const av = Number(a.first_year || 0) * 100 + Number(a.first_month_number || 0);
+        const bv = Number(b.first_year || 0) * 100 + Number(b.first_month_number || 0);
+        return bv - av;
+      })[0];
+  }
 
   function nominationGrid(nominations) {
     return `<div class="grid grid-cols-1 md:grid-cols-2 gap-gutter">${nominations.map(nominationCard).join("")}</div>`;
