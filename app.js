@@ -149,7 +149,7 @@
       ] = await Promise.all([
         apiGet("/api/student-vote/students"),
         apiGet("/api/student-vote/teachers"),
-        apiGet("/api/student-vote/nominations"),
+        apiGet("/api/student-vote/nominations?status=all"),
         apiGet("/api/student-vote/results"),
         apiGet("/api/student-vote/winners"),
         apiGet("/api/student-vote/settings"),
@@ -780,7 +780,7 @@
   }
 
   function winnerCertificateCard(winner) {
-    const student = studentById(winner.student_id);
+    const nomination = nominationForWinner(winner);
     if (!student) return "";
     const nomination = nominationForStudentAny(student.id);
     const stats = nomination ? nominationStats(nomination.id) : null;
@@ -818,16 +818,41 @@
     `;
   }
 
-  function nominationForStudentAny(studentId) {
-    return [...state.nominations]
-      .filter(n => String(n.student_id) === String(studentId))
-      .sort((a, b) => {
-        if (a.status !== b.status) return a.status === "active" ? -1 : 1;
-        const av = Number(a.first_year || 0) * 100 + Number(a.first_month_number || 0);
-        const bv = Number(b.first_year || 0) * 100 + Number(b.first_month_number || 0);
-        return bv - av;
-      })[0];
-  }
+function nominationForWinner(winner) {
+  const winnerValue = Number(winner.award_year || 0) * 100 + Number(winner.month_number || 0);
+
+  const nominations = [...state.nominations]
+    .filter(n => String(n.student_id) === String(winner.student_id))
+    .sort((a, b) => {
+      const av = Number(a.first_year || 0) * 100 + Number(a.first_month_number || 0);
+      const bv = Number(b.first_year || 0) * 100 + Number(b.first_month_number || 0);
+      return bv - av;
+    });
+
+  const exact = nominations.find(n =>
+    Number(n.first_year) === Number(winner.award_year) &&
+    Number(n.first_month_number) === Number(winner.month_number)
+  );
+  if (exact) return exact;
+
+  const beforeOrSame = nominations.find(n => {
+    const nv = Number(n.first_year || 0) * 100 + Number(n.first_month_number || 0);
+    return nv <= winnerValue;
+  });
+  if (beforeOrSame) return beforeOrSame;
+
+  return nominations[0] || null;
+}
+
+function nominationForStudentAny(studentId) {
+  return [...state.nominations]
+    .filter(n => String(n.student_id) === String(studentId))
+    .sort((a, b) => {
+      const av = Number(a.first_year || 0) * 100 + Number(a.first_month_number || 0);
+      const bv = Number(b.first_year || 0) * 100 + Number(b.first_month_number || 0);
+      return bv - av;
+    })[0];
+}
 
   function nominationGrid(nominations) {
     return `<div class="grid grid-cols-1 md:grid-cols-2 gap-gutter">${nominations.map(nominationCard).join("")}</div>`;
